@@ -1,0 +1,17 @@
+wgpu-raw-lean-reef-demo
+Copyright (c) 2026 Jonathan Merritt
+
+Licensed under either of the Apache License, Version 2.0 (LICENSE-APACHE) or
+the MIT license (LICENSE-MIT), at your option.
+
+Third-party components
+======================
+
+None is part of this repository: the build fetches them.
+
+webgpu-raw-lean (https://github.com/lancelet/webgpu-raw-lean)
+  Apache-2.0 or MIT. The WebGPU bindings, which the demo requires; their
+  NOTICE lists what they in turn fetch or link: wgpu-native (MIT or
+  Apache-2.0) and SDL3 (zlib License), linked natively; Dawn's emdawnwebgpu
+  (BSD 3-Clause), Lean 4's runtime and libuv (Apache-2.0, MIT), linked on the
+  web; and webgpu-headers' documentation (BSD 3-Clause).

@@ -1,0 +1,147 @@
+# Builds the demo natively on Linux, macOS and Windows, and runs a few frames
+# of it; builds it for the web, and publishes that to GitHub Pages.
+#
+# To build yourself, do what each step's comment says, in a POSIX shell (on
+# Windows, Git Bash). No GPU is needed: every runner has an adapter in
+# software (macOS's a virtual Metal device, Windows's WARP, Linux's Mesa's
+# lavapipe, installed below).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      # On Linux: a GPU in software, Mesa's lavapipe, through the Vulkan
+      # loader; the headers of the window systems SDL3 talks to, which the
+      # build needs to build SDL3 from source; and a virtual display.
+      - name: Install a software GPU, SDL3's build dependencies, a display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            libegl-dev libdrm-dev libgbm-dev xvfb
+
+      # On Windows, the bindings' C is compiled with MinGW's gcc (Lean's own
+      # compiler lacks the C library's headers; elsewhere the build uses cc).
+      - name: Set up the C compiler (Windows)
+        if: runner.os == 'Windows'
+        run: echo "CC=gcc" >> "$GITHUB_ENV"
+
+      # Lean's standard CI action: installs elan (and through it the toolchain
+      # lean-toolchain names), then runs
+      #
+      #     lake build
+      #
+      # which fetches the bindings, then what they need (wgpu-native, and
+      # SDL3, built from source on Linux and macOS), and builds the demo.
+      - name: Build
+        uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          test: false
+
+      # A few frames: on Linux under the virtual display; on Windows on the
+      # runner's desktop; on macOS, whose runner has no display, headless.
+      - name: Run a few frames
+        run: |
+          case "$RUNNER_OS" in
+            Linux)
+              SDL_VIDEO_DRIVER=x11 \
+                xvfb-run -a .lake/build/bin/reef --frames 3 ;;
+            macOS)   .lake/build/bin/reef --headless --frames 3 ;;
+            Windows) .lake/build/bin/reef --frames 3 ;;
+          esac
+
+  # The web build, with the bindings' build script: Lean, the bindings and the
+  # demo as WebAssembly, and the page.
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # elan and the toolchain, as above; then the demo's Lean, which fetches
+      # the bindings into .lake/packages/WebGPURaw/, with their build script.
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          use-github-cache: false
+      - name: Fetch the bindings, and build the demo's Lean
+        run: lake build Reef
+
+      - name: Read the bindings' Emscripten version
+        id: emscripten
+        run: |
+          version=$(cat .lake/packages/WebGPURaw/web/emscripten-version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The Emscripten SDK, at that version: emcc, em++, emar and emcmake.
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: ${{ steps.emscripten.outputs.version }}
+          actions-cache-folder: emsdk-cache
+
+      # CI only: what the build script builds once per Lean version and setup
+      # (Lean's runtime, Init and libuv for WebAssembly), Emscripten's own
+      # cache, and the sources fetched for them, kept between runs.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            .lake/packages/WebGPURaw/.lake/web/v*
+            .lake/packages/WebGPURaw/.lake/web/emscripten-cache
+            .lake/packages/WebGPURaw/vendor/lean4/v*
+            .lake/packages/WebGPURaw/vendor/libuv/v*
+          key: web-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}
+
+      # The page, with the program beside it, into .lake/web/site/.
+      - name: Build for the web
+        run: |
+          .lake/packages/WebGPURaw/web/build.sh \
+            --app Reef --page web/index.html --out .lake/web/site
+
+      # CI only: the built site, for the pages job to publish.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: .lake/web/site
+
+  # Publishes the web build to GitHub Pages, from main only.
+  pages:
+    name: pages
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [native, web]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5

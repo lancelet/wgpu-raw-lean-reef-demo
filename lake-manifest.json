@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/lancelet/webgpu-raw-lean",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "824efb8d4f1ade9de68c130d1f975b0419b5b55d",
+   "name": "WebGPURaw",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "main",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "Reef",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

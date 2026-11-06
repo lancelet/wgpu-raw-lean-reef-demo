@@ -1,0 +1,3 @@
+.lake/
+# Written by the build from shaders/*.wgsl
+/Reef/Shaders.lean

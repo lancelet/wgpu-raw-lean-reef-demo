@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A bioluminescent reef</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: system-ui, sans-serif;
+    background: #02060b;
+    color: #cfe8ee;
+  }
+  main { max-width: 960px; margin: 0 auto; }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border-radius: 6px;
+    background: #000;
+  }
+  a { color: #7fd8e8; }
+  pre { white-space: pre-wrap; color: #f0a0a0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>A bioluminescent reef</h1>
+  <p>
+    Drawn with WebGPU by Lean, compiled to WebAssembly, through
+    <a href="https://github.com/lancelet/webgpu-raw-lean">the raw WebGPU
+    bindings</a>.
+    <a href="https://github.com/lancelet/wgpu-raw-lean-reef-demo">Its
+    source</a>; it runs natively too.
+  </p>
+  <canvas id="canvas" width="960" height="540"></canvas>
+  <pre id="out"></pre>
+</main>
+<script>
+  // The program prints into the page; Emscripten's script declares `Module`.
+  var Module = (() => {
+    const out = document.getElementById("out");
+    const line = (text) => { out.textContent += text + "\n"; };
+    if (!navigator.gpu) line("This browser has no WebGPU.");
+    return { print: line, printErr: line };
+  })();
+</script>
+<script src="index.js"></script>
+</body>
+</html>

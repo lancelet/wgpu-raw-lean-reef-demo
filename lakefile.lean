@@ -12,8 +12,10 @@ libraries are copied beside the program, which finds them there.
     lake exe reef
 
 The shaders are WGSL files in `shaders/`, embedded in the program: the build
-writes them into `Reef/Shaders.lean` (generated, not committed) before it
-compiles the program, so an edited shader is built in.
+writes them into `Reef/Shaders.lean` before it compiles the program, so an
+edited shader is built in. That file is committed too: `lake build Reef`
+(which the web build runs) reads the library's imports before it writes it,
+and a fresh checkout would have none. CI checks it is current.
 -/
 
 package Reef where

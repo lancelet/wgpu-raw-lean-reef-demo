@@ -78,9 +78,10 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Scene.lean`: what is drawn, as the shaders read it.
 - `Reef/Render.lean`: the pipelines, and drawing a frame.
 - `Reef/Main.lean`: the program.
-- `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean` (not
-  committed), so it is embedded in the program, and an edited shader is
-  built in.
+- `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
+  it is embedded in the program, and an edited shader is built in. That file
+  is committed too, as `lake build Reef` (which the web build runs) looks
+  for it before writing it; CI checks it is current.
 - `web/index.html`: the page.
 
 ## License

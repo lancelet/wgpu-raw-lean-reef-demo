@@ -59,6 +59,13 @@ jobs:
           build: true
           test: false
 
+      # The build wrote Reef/Shaders.lean from shaders/; the committed copy,
+      # which `lake build Reef` needs before it would write it, must match
+      # (on Linux: on Windows, checkout may give the WGSL CRLF line endings).
+      - name: Check the committed shaders are current
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- Reef/Shaders.lean
+
       # A few frames: on Linux under the virtual display; on Windows on the
       # runner's desktop; on macOS, whose runner has no display, headless.
       - name: Run a few frames

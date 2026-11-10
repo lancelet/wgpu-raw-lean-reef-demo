@@ -23,8 +23,7 @@ package Reef where
   license      := "Apache-2.0 OR MIT"
   licenseFiles := #["LICENSE-APACHE", "LICENSE-MIT"]
 
-require WebGPURaw from git
-  "https://github.com/lancelet/webgpu-raw-lean" @ "main"
+require WebGPURaw from "../wgpu-raw-lean"
 
 /--
 `Reef/Shaders.lean`, from the WGSL files in `shaders/`: each `name.wgsl` a

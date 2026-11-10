@@ -4,7 +4,7 @@ open Lake DSL System
 /-!
 A bioluminescent reef, drawn with WebGPU from Lean, natively and in a
 browser, through the raw WebGPU bindings (`WebGPURaw`), which this package
-requires as any package would: from git, at a release. Building it fetches
+requires as any package would: from git, at their `main`. Building it fetches
 what the bindings need (wgpu-native, and SDL3 for the window); the shared
 libraries are copied beside the program, which finds them there.
 
@@ -23,7 +23,8 @@ package Reef where
   license      := "Apache-2.0 OR MIT"
   licenseFiles := #["LICENSE-APACHE", "LICENSE-MIT"]
 
-require WebGPURaw from "../wgpu-raw-lean"
+require WebGPURaw from git
+  "https://github.com/lancelet/webgpu-raw-lean" @ "main"
 
 /--
 `Reef/Shaders.lean`, from the WGSL files in `shaders/`: each `name.wgsl` a
@@ -54,9 +55,10 @@ lean_lib Reef where
   needs := #[shaders]
 
 /--
-The demo: `lake exe reef [--frames N] [--headless]`. With `--frames N`, it
-ends after `N` frames; with `--headless`, it draws with no display, as on
-macOS's CI runners (macOS only).
+The demo: `lake exe reef [--frames N] [--windowed] [--headless]`. With
+`--frames N`, it ends after `N` frames; with `--windowed`, it draws in a
+window rather than filling the screen; with `--headless`, it draws with no
+display, as on macOS's CI runners (macOS only).
 -/
 @[default_target]
 lean_exe reef where

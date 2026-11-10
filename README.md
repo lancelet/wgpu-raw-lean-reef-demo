@@ -22,16 +22,21 @@ ocean, with light from above, and glowing creatures drifting in it.
 You need Lean through [elan], and a C compiler with the C library's headers
 (`cc`, or the one `CC` names; on Windows, MinGW's: `CC=gcc`), `curl` and
 `unzip`; on Linux and macOS, `cmake` too, to build SDL3 (on Linux, with the
-X11 and Wayland headers, as [CI](.github/workflows/ci.yml) installs them).
-Then:
+X11 and Wayland headers, as [CI](.github/workflows/ci.yml) installs them;
+on macOS, with clang, for SDL3's Objective-C: if your `cc` is GCC, set
+`CC=clang`). With [Nix], `nix develop` is a shell with all of that, for
+Linux and macOS, and the web build's tools too. Then:
 
     lake build
     lake exe reef
 
-`reef --frames N` ends after `N` frames; `reef --headless` draws with no
-display (macOS only).
+It fills the screen; F leaves it, or fills it again, and Escape ends it.
+`reef --windowed` draws in a window instead; `reef --frames N` ends after
+`N` frames; `reef --headless` draws with no display (macOS only). How fast
+it draws is in the bottom right.
 
 [elan]: https://github.com/leanprover/elan
+[Nix]: https://nixos.org
 
 For the web, you need the [Emscripten SDK][emsdk] at the version the
 bindings name (`.lake/packages/WebGPURaw/web/emscripten-version`), with
@@ -77,6 +82,8 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Gpu.lean`: requesting a device; buffers and shader modules.
 - `Reef/Scene.lean`: what is drawn, as the shaders read it.
 - `Reef/Render.lean`: the pipelines, and drawing a frame.
+- `Reef/Overlay.lean`: text over the frame, drawn as pixels.
+- `Reef/Stats.lean`: how fast it draws, for the overlay.
 - `Reef/Main.lean`: the program.
 - `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
   it is embedded in the program, and an edited shader is built in. That file

@@ -1,12 +1,13 @@
+import Reef.Overlay
 import Reef.Scene
-import Reef.Shaders
 
 /-!
 # Drawing
 
-Two passes' worth of drawing in one render pass: the ocean, one triangle
+Three passes' worth of drawing in one render pass: the ocean, one triangle
 over the whole of the target, then the creatures over it, a quad each,
-instanced from a storage buffer, their light added to the ocean's.
+instanced from a storage buffer, their light added to the ocean's; then
+the overlay's text, over all (`Reef/Overlay.lean`).
 -/
 
 open WebGPU.Raw
@@ -26,6 +27,8 @@ structure Renderer where
   /-- The creatures' bind group: the uniforms and the creatures. -/
   glowData  : BindGroup
   count     : UInt32
+  /-- The text over it all. -/
+  overlay   : Overlay
 
 /-- Light added to what is there: the creatures' glow. -/
 def additive : BlendState := {
@@ -76,11 +79,13 @@ def Renderer.create (device : Device) (format : TextureFormat)
     device, ocean, glow, frame, oceanData, glowData
     queue := ← device.getQueue
     count := scene.size.toUInt32
+    overlay := ← Overlay.create device format
   }
 
-/-- Draw the frame at `time` seconds into `texture`, `aspect` wide to 1 high. -/
-def Renderer.draw (r : Renderer) (time aspect : Float) (texture : Texture) :
-    IO Unit := do
+/-- Draw the frame at `time` seconds into `texture`, `width` by `height`. -/
+def Renderer.draw (r : Renderer) (time : Float) (width height : UInt32)
+    (texture : Texture) : IO Unit := do
+  let aspect := width.toFloat / (max height 1).toFloat
   r.queue.writeBuffer r.frame 0 (frameBytes time aspect)
   let view ← texture.createView none
   let encoder ← r.device.createCommandEncoder none
@@ -96,6 +101,7 @@ def Renderer.draw (r : Renderer) (time aspect : Float) (texture : Texture) :
   pass.setPipeline r.glow
   pass.setBindGroup 0 (some r.glowData) #[]
   pass.draw 6 r.count 0 0
+  r.overlay.draw pass width height
   pass.«end»
   r.queue.submit #[← encoder.finish none]
 

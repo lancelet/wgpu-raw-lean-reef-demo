@@ -5,40 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A bioluminescent reef</title>
 <style>
+  /* The canvas fills the page: the window library styles it so, and gives
+     it as many pixels as it covers. */
   :root { color-scheme: dark; }
-  body {
+  html, body {
     margin: 0;
-    padding: 16px;
-    font-family: system-ui, sans-serif;
+    height: 100%;
+    overflow: hidden;
     background: #02060b;
     color: #cfe8ee;
+    font: 13px system-ui, sans-serif;
   }
-  main { max-width: 960px; margin: 0 auto; }
-  canvas {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 16 / 9;
-    border-radius: 6px;
-    background: #000;
+  canvas { display: block; background: #000; }
+  #about {
+    position: fixed;
+    left: 12px;
+    bottom: 10px;
+    opacity: 0.55;
   }
+  #about:hover { opacity: 1; }
   a { color: #7fd8e8; }
-  pre { white-space: pre-wrap; color: #f0a0a0; }
+  #out {
+    position: fixed;
+    left: 12px;
+    top: 10px;
+    margin: 0;
+    white-space: pre-wrap;
+    color: #f0a0a0;
+  }
 </style>
 </head>
 <body>
-<main>
-  <h1>A bioluminescent reef</h1>
-  <p>
-    Drawn with WebGPU by Lean, compiled to WebAssembly, through
-    <a href="https://github.com/lancelet/webgpu-raw-lean">the raw WebGPU
-    bindings</a>.
-    <a href="https://github.com/lancelet/wgpu-raw-lean-reef-demo">Its
-    source</a>; it runs natively too.
-  </p>
-  <canvas id="canvas" width="960" height="540"></canvas>
-  <pre id="out"></pre>
-</main>
+<canvas id="canvas" width="960" height="540"></canvas>
+<p id="about">
+  A bioluminescent reef, drawn with WebGPU by
+  <a href="https://lean-lang.org">Lean</a>, through
+  <a href="https://github.com/lancelet/webgpu-raw-lean">the raw WebGPU
+  bindings</a> (<a href="https://github.com/lancelet/wgpu-raw-lean-reef-demo">its
+  source</a>). F: fullscreen.
+</p>
+<pre id="out"></pre>
 <script>
   // The program prints into the page; Emscripten's script declares `Module`.
   var Module = (() => {

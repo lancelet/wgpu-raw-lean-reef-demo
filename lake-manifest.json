@@ -5,7 +5,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "824efb8d4f1ade9de68c130d1f975b0419b5b55d",
+   "rev": "93a733e43a3a37d0d3191bd87d5cd5c70af550c1",
    "name": "WebGPURaw",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",

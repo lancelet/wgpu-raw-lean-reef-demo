@@ -21,11 +21,14 @@ structure Options where
   headless : Bool       := false
   /-- Draw in a window, not filling the screen (natively). -/
   windowed : Bool       := false
+  /-- Draw one frame into this file, as a PPM image, and end. -/
+  screenshot : Option String := none
 
 /-- How to run the demo. -/
-def usage : String := "usage: reef [--frames N] [--windowed] [--headless]"
+def usage : String :=
+  "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE]"
 
-/-- The options `args` give: `[--frames N] [--windowed] [--headless]`. -/
+/-- The options `args` give, as `usage` says. -/
 def Options.parse : List String → Except String Options
   | [] => pure {}
   | "--frames" :: n :: rest => do
@@ -35,6 +38,8 @@ def Options.parse : List String → Except String Options
     return { ← Options.parse rest with headless := true }
   | "--windowed" :: rest => do
     return { ← Options.parse rest with windowed := true }
+  | "--screenshot" :: file :: rest => do
+    return { ← Options.parse rest with screenshot := some file }
   | arg :: _ => throw s!"unknown option: {arg}\n{usage}"
 
 /--

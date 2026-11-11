@@ -13,7 +13,7 @@ Windows) and in a browser: [see it in yours][pages] (it needs WebGPU).
 
 It is also an example of a package that uses the raw WebGPU bindings,
 [webgpu-raw-lean][bindings], and builds both ways. So far it draws the
-ocean, with light from above, and glowing creatures drifting in it.
+floor the reef will stand on, as a grid, and a camera to look at it with.
 
 [bindings]: https://github.com/lancelet/webgpu-raw-lean
 
@@ -32,8 +32,18 @@ Linux and macOS, and the web build's tools too. Then:
 
 It fills the screen; F leaves it, or fills it again, and Escape ends it.
 `reef --windowed` draws in a window instead; `reef --frames N` ends after
-`N` frames; `reef --headless` draws with no display (macOS only). How fast
-it draws is in the bottom right.
+`N` frames; `reef --headless` draws with no display (macOS only);
+`reef --screenshot FILE` draws one frame into that file, a PPM image, and
+ends (with `--headless`, with no display at all). How fast it draws, and
+where the camera is, are in the bottom right.
+
+The camera starts in orbit mode, as a modelling program's viewport: two
+fingers on a trackpad (or the wheel) orbit the point it looks at; with
+Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out. The
+main mouse button, dragged, does the same three. Tab switches to fly mode,
+and back: there, W, A, S, D (or the arrows) move, Q and E go down and up,
+Shift hurries, and dragging or two fingers turn the camera. Home puts the
+camera back where it started.
 
 [elan]: https://github.com/leanprover/elan
 [Nix]: https://nixos.org
@@ -80,11 +90,15 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 
 - `Reef/Platform.lean`: the options, and the window.
 - `Reef/Gpu.lean`: requesting a device; buffers and shader modules.
-- `Reef/Scene.lean`: what is drawn, as the shaders read it.
+- `Reef/Math.lean`: vectors, and the camera's matrices.
+- `Reef/Camera.lean`: the camera, orbited or flown.
+- `Reef/App.lean`: the state, and the pure functions that change it, on an
+  event and once a frame. What they cannot do themselves they ask the
+  program for.
 - `Reef/Render.lean`: the pipelines, and drawing a frame.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.
 - `Reef/Stats.lean`: how fast it draws, for the overlay.
-- `Reef/Main.lean`: the program.
+- `Reef/Main.lean`: the program: the shell around the state.
 - `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
   it is embedded in the program, and an edited shader is built in. That file
   is committed too, as `lake build Reef` (which the web build runs) looks

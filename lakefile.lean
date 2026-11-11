@@ -55,10 +55,12 @@ lean_lib Reef where
   needs := #[shaders]
 
 /--
-The demo: `lake exe reef [--frames N] [--windowed] [--headless]`. With
-`--frames N`, it ends after `N` frames; with `--windowed`, it draws in a
-window rather than filling the screen; with `--headless`, it draws with no
-display, as on macOS's CI runners (macOS only).
+The demo: `lake exe reef [--frames N] [--windowed] [--headless]
+[--screenshot FILE]`. With `--frames N`, it ends after `N` frames; with
+`--windowed`, it draws in a window rather than filling the screen; with
+`--headless`, it draws with no display, as on macOS's CI runners (macOS
+only); with `--screenshot FILE`, it draws one frame into that file, a PPM
+image, and ends.
 -/
 @[default_target]
 lean_exe reef where

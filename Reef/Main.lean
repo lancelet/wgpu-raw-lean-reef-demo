@@ -34,14 +34,29 @@ def longestStep : Float := 0.1
 /-- A screenshot's texture format: as a surface's, sRGB. -/
 def screenshotFormat : TextureFormat := .rgba8UnormSrgb
 
-/-- Configure `surface` to `window`'s size in pixels; returns that size. -/
+/--
+The sRGB kind of `format`, where it has one: the frame is drawn in sRGB on
+every platform, so that it looks the same on each. Natively the surface's
+preferred format is sRGB already; in a browser it is not, and the frame is
+drawn through views of this kind instead.
+-/
+def srgbOf : TextureFormat → TextureFormat
+  | .bgra8Unorm => .bgra8UnormSrgb
+  | .rgba8Unorm => .rgba8UnormSrgb
+  | format      => format
+
+/--
+Configure `surface` to `window`'s size in pixels, in `format`, with views
+in `viewFormat` allowed where it differs; returns that size.
+-/
 def configure (window : Window) (surface : Surface) (device : Device)
-    (format : TextureFormat) (alpha : CompositeAlphaMode) :
+    (format viewFormat : TextureFormat) (alpha : CompositeAlphaMode) :
     IO (UInt32 × UInt32) := do
   let (width, height) ← window.size
   surface.configure {
     device      := device
     format      := format
+    viewFormats := if viewFormat == format then #[] else #[viewFormat]
     width       := width
     height      := height
     presentMode := .fifo
@@ -77,13 +92,16 @@ def ppm (width height row : Nat) (pixels : ByteArray) : ByteArray := Id.run do
   return out
 
 /--
-Draw `app`'s one frame into a texture `app.width` by `app.height`, read it
-back, and write it to `path` as a PPM image: as the frame looks, the
-texture's format the surface's kind (sRGB), the file's bytes as shown.
+Draw `app`'s one frame into a texture `app.width` by `app.height`, the
+overlay with the camera's line over it, read it back, and write it to
+`path` as a PPM image: as the frame looks, the texture's format the
+surface's kind (sRGB), the file's bytes as shown.
 -/
 def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     (app : App) (path : String) : IO Unit := do
   let (width, height) := (app.width, app.height)
+  -- The overlay too, with the camera's line: how the text looks.
+  renderer.overlay.show (describe app) (textSize height)
   let texture ← device.createTexture {
     label  := "screenshot"
     usage  := .renderAttachment ||| .copySrc
@@ -130,11 +148,14 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let some format := capabilities.formats[0]?
     | throw (IO.userError s!"the surface has no format: {repr status}")
   let alpha := capabilities.alphaModes.getD 0 .auto
-  let renderer ← Renderer.create device format
-  let (width, height) ← configure window surface device format alpha
+  let viewFormat := srgbOf format
+  let renderer ← Renderer.create device viewFormat
+  let (width, height) ←
+    configure window surface device format viewFormat alpha
   let app ← IO.mkRef ({ width, height } : App)
   let reconfigure := do
-    let (width, height) ← configure window surface device format alpha
+    let (width, height) ←
+      configure window surface device format viewFormat alpha
     app.modify fun a => { a with width, height }
   let drawn ← IO.mkRef 0
   let stats ← IO.mkRef ({ since := ← IO.monoNanosNow } : Stats)

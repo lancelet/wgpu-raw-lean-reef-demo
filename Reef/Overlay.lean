@@ -1,3 +1,5 @@
+import Reef.Base64
+import Reef.Fonts
 import Reef.Gpu
 import Reef.Shaders
 import WebGPUWindow
@@ -6,10 +8,10 @@ import WebGPUWindow
 # The overlay
 
 Text over the reef, in the bottom right: drawn as pixels by the window
-library (`textImage`: natively by SDL3, in a browser by a canvas), written
-into a texture, and drawn from it a pixel to a pixel, on a translucent
-panel, over the frame. The text is drawn again only when it, or its size,
-changes; the texture made again only when its size does.
+library (`textImage`, in JetBrains Mono, embedded: `fonts/`), written into
+a texture, and drawn from it a pixel to a pixel, on a translucent panel,
+over the frame. The text is drawn again only when it, or its size, changes;
+the texture made again only when its size does.
 -/
 
 open WebGPU.Raw WebGPU.Window
@@ -28,6 +30,8 @@ structure Overlay where
   device    : Device
   queue     : Queue
   pipeline  : RenderPipeline
+  /-- The text's font: JetBrains Mono. -/
+  font      : Font
   /-- Where the text goes, written each frame. -/
   placement : Buffer
   /-- The text, as a texture, if any; and what it shows, at what size. -/
@@ -71,6 +75,7 @@ def Overlay.create (device : Device) (format : TextureFormat) :
   return {
     device, pipeline
     queue     := ← device.getQueue
+    font      := ← Font.ofBytes (base64Decode Fonts.JetBrainsMono_Regular)
     placement := ← createBuffer device "placement" .uniform
       (placementBytes 1 1 0 0 0)
     text      := ← IO.mkRef (none, "", 0)
@@ -102,7 +107,7 @@ texture made again, only if they change.
 def Overlay.show (o : Overlay) (text : String) (size : UInt32) : IO Unit := do
   let (current, shown, shownSize) ← o.text.get
   if text == shown && size == shownSize then return
-  let image ← textImage text size
+  let image ← textImage o.font text size
   if image.width == 0 then
     o.text.set (none, text, size)
     return

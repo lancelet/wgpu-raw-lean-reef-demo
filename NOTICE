@@ -7,7 +7,13 @@ the MIT license (LICENSE-MIT), at your option.
 Third-party components
 ======================
 
-None is part of this repository: the build fetches them.
+JetBrains Mono (https://github.com/JetBrains/JetBrainsMono)
+  Copyright 2020 The JetBrains Mono Project Authors
+  SIL Open Font License, Version 1.1: fonts/OFL.txt. In this repository as
+  fonts/JetBrainsMono-Regular.ttf, embedded in the program (Reef/Fonts.lean)
+  for the text it draws.
+
+The rest is not part of this repository: the build fetches it.
 
 webgpu-raw-lean (https://github.com/lancelet/webgpu-raw-lean)
   Apache-2.0 or MIT. The WebGPU bindings, which the demo requires; their

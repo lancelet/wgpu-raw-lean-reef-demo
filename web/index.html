@@ -17,14 +17,6 @@
     font: 13px system-ui, sans-serif;
   }
   canvas { display: block; background: #000; }
-  #about {
-    position: fixed;
-    left: 12px;
-    bottom: 10px;
-    opacity: 0.55;
-  }
-  #about:hover { opacity: 1; }
-  a { color: #7fd8e8; }
   #out {
     position: fixed;
     left: 12px;
@@ -37,14 +29,6 @@
 </head>
 <body>
 <canvas id="canvas" width="960" height="540"></canvas>
-<p id="about">
-  A bioluminescent reef, drawn with WebGPU by
-  <a href="https://lean-lang.org">Lean</a>, through
-  <a href="https://github.com/lancelet/webgpu-raw-lean">the raw WebGPU
-  bindings</a> (<a href="https://github.com/lancelet/wgpu-raw-lean-reef-demo">its
-  source</a>). Two fingers orbit; with Shift, pan; pinch to dolly. Tab
-  flies (W, A, S, D, Q, E). F: fullscreen.
-</p>
 <pre id="out"></pre>
 <script>
   // The program prints into the page; Emscripten's script declares `Module`.

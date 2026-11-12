@@ -103,6 +103,9 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
   it is embedded in the program, and an edited shader is built in. That file
   is committed too, as `lake build Reef` (which the web build runs) looks
   for it before writing it; CI checks it is current.
+- `fonts/`: the overlay's font, JetBrains Mono (under the SIL Open Font
+  License, `fonts/OFL.txt`), which the build writes into `Reef/Fonts.lean`,
+  in base64, committed likewise.
 - `web/index.html`: the page.
 
 ## License

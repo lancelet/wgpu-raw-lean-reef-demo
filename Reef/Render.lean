@@ -17,6 +17,8 @@ namespace Reef
 structure Renderer where
   device   : Device
   queue    : Queue
+  /-- The format drawn in: the targets' views are of it. -/
+  format   : TextureFormat
   grid     : RenderPipeline
   /-- The frame's uniforms, written each frame. -/
   frame    : Buffer
@@ -67,19 +69,22 @@ def Renderer.create (device : Device) (format : TextureFormat) :
     entries := #[{ binding := 0, buffer := some frame }]
   }
   return {
-    device, grid, frame, gridData
+    device, format, grid, frame, gridData
     queue   := ← device.getQueue
     overlay := ← Overlay.create device format
   }
 
-/-- Draw `app`'s scene into `texture`, `app.width` by `app.height`. -/
+/--
+Draw `app`'s scene into `texture`, `app.width` by `app.height`, through a
+view in the renderer's format (the texture's own, or one it allows).
+-/
 def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     IO Unit := do
   let aspect := app.width.toFloat / (max app.height 1).toFloat
   let viewProj := Mat4.perspective fovY aspect near far * app.camera.view
   r.queue.writeBuffer r.frame 0
     (frameBytes viewProj app.camera.position app.grid)
-  let view ← texture.createView none
+  let view ← texture.createView (some { format := r.format })
   let encoder ← r.device.createCommandEncoder none
   let pass ← encoder.beginRenderPass { colorAttachments := #[{
     view       := some view

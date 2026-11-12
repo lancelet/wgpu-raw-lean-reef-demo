@@ -6,7 +6,8 @@ import Reef.Stats
 # The demo
 
 A window, a surface on it, and the scene drawn in every frame, till the
-window closes (or, given `--frames N`, for `N` frames), with how fast it
+window closes (or, given `--frames N`, for `N` frames, drawn or, the
+window hidden, waited through), with how fast it
 draws, and where the camera is, in the bottom right. The surface is
 configured again when the window is resized, or the surface says it must
 be.
@@ -154,7 +155,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       | .toggleFullscreen => toggleFullscreen window
       | .reconfigure => reconfigure
     -- No texture: outdated, by a resize not yet seen, or lost, configure
-    -- again; timed out, try again; and draw in the next frame.
+    -- again; timed out, or hidden, try again; and draw in the next frame.
     let draw (texture : Texture) : IO Unit := do
       let begun ← IO.monoNanosNow
       renderer.draw (← app.get) texture
@@ -163,6 +164,14 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     | none => drawn.modify (· + 1)
     | some (.ok .outdated) | some (.ok .lost) => reconfigure
     | some (.ok .timeout) => pure ()
+    -- Hidden, behind other windows or not yet shown: nothing to draw in
+    -- till it shows; wait a little rather than spin. It counts as a frame,
+    -- so that `--frames N` ends where no window ever shows.
+    | some (.error code) =>
+      unless code == occluded do
+        throw (IO.userError s!"no texture to draw in: {code}")
+      IO.sleep 16
+      drawn.modify (· + 1)
     | some status =>
       throw (IO.userError s!"no texture to draw in: {repr status}")
     let (next, text) := (← stats.get).frame (← IO.monoNanosNow) (← busy.get)

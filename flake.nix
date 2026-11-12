@@ -66,13 +66,22 @@
               pkgs.nodejs
               pkgs.git
             ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux ([ pkgs.pkg-config ] ++ linuxLibraries);
-
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
+              [ pkgs.pkg-config ] ++ linuxLibraries
+            );
+            # The macOS the build targets, compiling and linking (Lean's
+            # compiler and Nix's read it, as MACOSX_DEPLOYMENT_TARGET): the
+            # one Lean's own libraries are built for (its libgmp and libuv),
+            # above the shell's default, below which the linker warns of
+            # every object newer than it.
+            buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+              (pkgs.darwinMinVersionHook "15.0")
+            ];
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # So that SDL3 and wgpu-native find those libraries when the
             # program runs (they load them by name, not by store path).
-            LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux (
-              pkgs.lib.makeLibraryPath linuxLibraries
-            );
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath linuxLibraries;
           };
         }
       );

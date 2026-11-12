@@ -71,8 +71,14 @@ structure App where
   quit     : Bool := false
   deriving Repr, Inhabited
 
-/-- How much a wheel event is: a browser's units are pixels, SDL's larger. -/
-def wheelUnit : Float := if onWeb then 0.05 else 1
+/--
+How much a wheel event is: a browser's units are pixels, SDL's tenths of
+one, so that a finger moves the scene the same on both. The wheel's values
+are the scroll's, which with natural scrolling (a Mac's default, assumed)
+run against the fingers: negated, they are the fingers' own motion, right
+and up, which the scene follows as it follows a drag.
+-/
+def wheelUnit : Float := if onWeb then -0.05 else -0.5
 
 /-- Radians of orbit, or turn, per wheel unit, and per pixel dragged. -/
 def orbitPerUnit : Float := 0.04
@@ -100,7 +106,9 @@ def App.viewport (a : App) (mods : Modifiers) (dx dy : Float)
     (orbitK panK dollyK : Float) : App :=
   if mods.alt then a.moveCamera (·.turn (-dx * orbitK) (dy * orbitK))
   else if mods.ctrl then a.moveCamera (·.dolly (dy * dollyK))
-  else if mods.shift then a.moveCamera (·.pan (-dx * panK) (dy * panK))
+  -- Panned, the scene follows the fingers, or the pointer: the camera goes
+  -- the other way.
+  else if mods.shift then a.moveCamera (·.pan (-dx * panK) (-dy * panK))
   else a.moveCamera (·.orbit (-dx * orbitK) (dy * orbitK))
 
 /-- A key held, or not: the moving keys. -/
@@ -132,8 +140,13 @@ def update (event : Event) (a : App) : App × List Command :=
     ({ a with dragging := pressed, mouse := (x, y) }, [])
   | .mouseButton .. => (a, [])
   | .wheel x y mods =>
-    (a.viewport mods (x * wheelUnit) (y * wheelUnit) orbitPerUnit panPerUnit
-      dollyPerUnit, [])
+    -- A pinch, or Ctrl and the wheel, dollies by the scroll itself (up, or
+    -- spread, is in), not by the fingers' motion.
+    if mods.ctrl then
+      (a.moveCamera (·.dolly (y * wheelUnit.abs * dollyPerUnit)), [])
+    else
+      (a.viewport mods (x * wheelUnit) (y * wheelUnit) orbitPerUnit panPerUnit
+        dollyPerUnit, [])
   | .key code pressed repeated _ =>
     let a := a.hold code pressed
     if !pressed || repeated then (a, [])

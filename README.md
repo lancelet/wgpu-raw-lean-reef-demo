@@ -37,13 +37,12 @@ It fills the screen; F leaves it, or fills it again, and Escape ends it.
 ends (with `--headless`, with no display at all). How fast it draws, and
 where the camera is, are in the bottom right.
 
-The camera starts in orbit mode, as a modelling program's viewport: two
+The camera is driven as a modelling program's viewport, with no modes: two
 fingers on a trackpad (or the wheel) orbit the point it looks at; with
-Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out. The
-main mouse button, dragged, does the same three. Tab switches to fly mode,
-and back: there, W, A, S, D (or the arrows) move, Q and E go down and up,
-Shift hurries, and dragging or two fingers turn the camera. Home puts the
-camera back where it started.
+Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
+Alt, turn in place. The main mouse button, dragged, does the same four.
+W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
+hurries. Home puts the camera back where it started.
 
 [elan]: https://github.com/leanprover/elan
 [Nix]: https://nixos.org
@@ -91,7 +90,7 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Platform.lean`: the options, and the window.
 - `Reef/Gpu.lean`: requesting a device; buffers and shader modules.
 - `Reef/Math.lean`: vectors, and the camera's matrices.
-- `Reef/Camera.lean`: the camera, orbited or flown.
+- `Reef/Camera.lean`: the camera, orbited, moved and turned.
 - `Reef/App.lean`: the state, and the pure functions that change it, on an
   event and once a frame. What they cannot do themselves they ask the
   program for.

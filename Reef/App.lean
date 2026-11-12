@@ -12,26 +12,20 @@ the time passed. The program (`Reef/Main.lean`) is the shell around them.
 
 ## Driving the camera
 
-In orbit mode, as a modelling program's viewport: two fingers on a trackpad
+As a modelling program's viewport, with no modes: two fingers on a trackpad
 (the wheel) orbit the target; with Shift, pan; with Ctrl (or a pinch, in a
-browser), dolly. The main mouse button, dragged, does the same three.
-Tab switches to fly mode, and back: there, W, A, S, D (or the arrows) move,
-Q and E go down and up, Shift hurries, and dragging or two fingers turn the
-camera. Home puts the camera back where it started; F fills the screen, or
-leaves it; Escape ends the demo, natively.
+browser), dolly; with Alt, turn in place. The main mouse button, dragged,
+does the same four. W, A, S, D (or the arrows) move the camera, and its
+target with it, Q and E down and up, Shift hurrying. Home puts the camera
+back where it started; F fills the screen, or leaves it; Escape ends the
+demo, natively.
 -/
 
 open WebGPU.Window
 
 namespace Reef
 
-/-- How the camera is driven. -/
-inductive Mode where
-  | orbit
-  | fly
-  deriving Repr, BEq, Inhabited
-
-/-- The keys held that fly the camera. -/
+/-- The keys held that move the camera. -/
 structure Held where
   forward : Bool := false
   back    : Bool := false
@@ -63,7 +57,6 @@ inductive Command where
 
 structure App where
   camera   : Camera := Camera.initial
-  mode     : Mode   := .orbit
   held     : Held   := {}
   grid     : Grid   := {}
   /-- The mouse's place, in the window's units, and whether the main button
@@ -90,9 +83,9 @@ def panPerPixel : Float := 0.002
 /-- Of the dolly's exponent, per wheel unit, and per pixel. -/
 def dollyPerUnit : Float := 0.1
 def dollyPerPixel : Float := 0.01
-/-- Metres a second flying; with Shift, times this again. -/
-def flySpeed : Float := 4
-def flyFast : Float := 4
+/-- Metres a second the keys move; with Shift, times this again. -/
+def moveSpeed : Float := 4
+def moveFast : Float := 4
 
 /-- The code of the key `c` names. -/
 def keyOf (c : Char) : UInt32 := c.toNat.toUInt32
@@ -101,17 +94,16 @@ def keyOf (c : Char) : UInt32 := c.toNat.toUInt32
 def App.moveCamera (a : App) (f : Camera → Camera) : App :=
   { a with camera := f a.camera }
 
-/-- Orbit, pan or dolly, as the modifiers say, by `dx` and `dy` in units. -/
+/-- Orbit, pan, dolly or turn, as the modifiers say, by `dx` and `dy` in
+units. -/
 def App.viewport (a : App) (mods : Modifiers) (dx dy : Float)
     (orbitK panK dollyK : Float) : App :=
-  match a.mode with
-  | .fly => a.moveCamera (·.turn (-dx * orbitK) (dy * orbitK))
-  | .orbit =>
-    if mods.ctrl then a.moveCamera (·.dolly (dy * dollyK))
-    else if mods.shift then a.moveCamera (·.pan (-dx * panK) (dy * panK))
-    else a.moveCamera (·.orbit (-dx * orbitK) (dy * orbitK))
+  if mods.alt then a.moveCamera (·.turn (-dx * orbitK) (dy * orbitK))
+  else if mods.ctrl then a.moveCamera (·.dolly (dy * dollyK))
+  else if mods.shift then a.moveCamera (·.pan (-dx * panK) (dy * panK))
+  else a.moveCamera (·.orbit (-dx * orbitK) (dy * orbitK))
 
-/-- A key held, or not: the flying keys. -/
+/-- A key held, or not: the moving keys. -/
 def App.hold (a : App) (code : UInt32) (pressed : Bool) : App :=
   let h := a.held
   let h :=
@@ -147,22 +139,17 @@ def update (event : Event) (a : App) : App × List Command :=
     if !pressed || repeated then (a, [])
     else if code == keyOf 'f' then (a, [.toggleFullscreen])
     else if code == Key.escape && !onWeb then ({ a with quit := true }, [])
-    else if code == Key.tab then
-      ({ a with mode := if a.mode == .orbit then .fly else .orbit }, [])
     else if code == Key.home then ({ a with camera := Camera.initial }, [])
     else (a, [])
 
-/-- The state `dt` seconds on: the camera flown by the keys held. -/
+/-- The state `dt` seconds on: the camera moved by the keys held. -/
 def step (dt : Float) (a : App) : App :=
-  match a.mode with
-  | .orbit => a
-  | .fly =>
-    let h := a.held
-    let axis (pos neg : Bool) : Float :=
-      (if pos then 1 else 0) - (if neg then 1 else 0)
-    let speed := flySpeed * (if h.fast then flyFast else 1) * dt
-    let v : Vec3 := ⟨axis h.right h.left, axis h.up h.down,
-                     axis h.forward h.back⟩
-    if v == Vec3.zero then a else a.moveCamera (·.fly (speed * v))
+  let h := a.held
+  let axis (pos neg : Bool) : Float :=
+    (if pos then 1 else 0) - (if neg then 1 else 0)
+  let speed := moveSpeed * (if h.fast then moveFast else 1) * dt
+  let v : Vec3 := ⟨axis h.right h.left, axis h.up h.down,
+                   axis h.forward h.back⟩
+  if v == Vec3.zero then a else a.moveCamera (·.fly (speed * v))
 
 end Reef

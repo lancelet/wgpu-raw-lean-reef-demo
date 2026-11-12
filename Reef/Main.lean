@@ -73,12 +73,11 @@ def toggleFullscreen (window : Window) : IO Unit := do
 def signed (x : Float) (places : Nat) : String :=
   (if x < 0 then "-" else "") ++ fixed x.abs places
 
-/-- The camera, for the overlay: the mode, where it is, which way it looks. -/
+/-- The camera, for the overlay: where it is, and which way it looks. -/
 def describe (a : App) : String :=
   let c := a.camera
   let degrees (r : Float) : String := signed (r * 57.2958) 0
-  s!"{if a.mode == .orbit then "orbit" else "fly  "} \
-    at {signed c.position.x 1}, {signed c.position.y 1}, \
+  s!"camera {signed c.position.x 1}, {signed c.position.y 1}, \
     {signed c.position.z 1}  yaw {degrees c.yaw} pitch {degrees c.pitch}"
 
 /-- A PPM image (binary, `P6`) of `width` by `height` pixels, from their

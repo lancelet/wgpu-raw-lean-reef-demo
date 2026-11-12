@@ -5,9 +5,9 @@ import Reef.Math
 
 Where it is, and which way it looks: a yaw (about the vertical) and a pitch,
 in radians, and the distance to the point it is looking at, its target,
-which orbiting goes around. Two ways to move it, both from the same state:
-orbiting, panning and dollying about the target, as a modelling program's
-viewport does; and flying, the camera itself moved and turned.
+which orbiting goes around. Orbiting, panning and dollying about the
+target, as a modelling program's viewport does; and the camera itself
+moved, its target with it, and turned in place.
 -/
 
 namespace Reef
@@ -64,7 +64,7 @@ def dolly (c : Camera) (amount : Float) : Camera :=
   let d := max nearest (c.distance * (-amount).exp)
   { c with distance := d, position := t - d * c.forward }
 
-/-- Moved by `v`, in its own axes: right, up, forward. -/
+/-- Moved by `v`, in its own axes: right, up, forward; its target too. -/
 def fly (c : Camera) (v : Vec3) : Camera :=
   { c with position := c.position + v.x * c.right + v.y * c.up
                                   + v.z * c.forward }

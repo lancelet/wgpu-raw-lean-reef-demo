@@ -22,6 +22,11 @@ is current.
 
 package Reef where
   leanOptions  := #[⟨`autoImplicit, false⟩]
+  -- On macOS, the modules' C is compiled for the macOS Lean's own libraries
+  -- are built for, whatever shell the build runs in: the linker warns of
+  -- every object newer than its target (the Nix shell's, `flake.nix`).
+  moreLeancArgs :=
+    if System.Platform.isOSX then #["-mmacos-version-min=15.0"] else #[]
   license      := "Apache-2.0 OR MIT"
   licenseFiles := #["LICENSE-APACHE", "LICENSE-MIT"]
 

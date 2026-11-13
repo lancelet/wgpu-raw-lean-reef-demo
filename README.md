@@ -44,7 +44,8 @@ Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
 Alt, turn in place. The main mouse button, dragged, does the same four.
 W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
 hurries. Home puts the camera back where it started. 1 shows the
-wireframe, or hides it, and 2 the grid.
+wireframe, or hides it, and 2 the grid; `[` and `]` halve and double the
+detail, how finely every mesh is made, for the hardware at hand.
 
 [elan]: https://github.com/leanprover/elan
 [Nix]: https://nixos.org

@@ -52,7 +52,8 @@ structure Renderer where
   frame    : Buffer
   /-- The bind group of the frame's uniforms, for every pipeline here. -/
   data     : BindGroup
-  floor    : FloorMesh
+  /-- The floor's mesh: made again when the detail changes (`remesh`). -/
+  floor    : IO.Ref FloorMesh
   /-- The depth buffer, once a frame has been drawn, for its size. -/
   depth    : IO.Ref (Option Depth)
   /-- The text over it all. -/
@@ -100,12 +101,14 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
     (format : TextureFormat) (buffers : Array VertexBufferLayout := #[])
     (fragment : String := "fs") (topology : PrimitiveTopology := .triangleList)
     (depthCompare : CompareFunction := .less) (depthWrite : Bool := true)
-    (blend : Option BlendState := none) :
+    (blend : Option BlendState := none)
+    (constants : Array ConstantEntry := #[]) :
     IO RenderPipeline :=
   device.createRenderPipeline {
     label     := label
     layout    := some layout
-    vertex    := { module := module, entryPoint := some "vs", buffers }
+    vertex    := { module := module, entryPoint := some "vs", buffers,
+                   constants }
     fragment  := some {
       module     := module
       entryPoint := some fragment
@@ -141,6 +144,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let sandWire ← pipeline device "sand wire" layout sandModule format
     #[latticeLayout] (fragment := "fs_wire") (topology := .lineList)
     (depthCompare := .lessEqual) (depthWrite := false) (blend := some overBlend)
+    (constants := #[{ key := "wireframe", value := 1 }])
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
@@ -153,10 +157,14 @@ def Renderer.create (device : Device) (format : TextureFormat)
   return {
     device, format, sand, sandWire, grid, frame, data
     queue   := ← device.getQueue
-    floor   := ← FloorMesh.create device floor.cells
+    floor   := ← IO.mkRef (← FloorMesh.create device floor.cells)
     depth   := ← IO.mkRef none
     overlay := ← Overlay.create device format depthFormat
   }
+
+/-- The floor's mesh made again, for `floor` as it is now. -/
+def Renderer.remesh (r : Renderer) (floor : Floor) : IO Unit := do
+  r.floor.set (← FloorMesh.create r.device floor.cells)
 
 /-- The depth buffer for a target `width` by `height`: made anew if the
 size is new. -/
@@ -177,13 +185,14 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
 of a level's. -/
 def Renderer.drawFloor (r : Renderer) (pass : RenderPassEncoder) (app : App)
     (pick : LevelMesh → Buffer × UInt32) : IO Unit := do
-  pass.setVertexBuffer 0 (some r.floor.vertices) 0
-    ((r.floor.n + 1) * (r.floor.n + 1) * 8).toUInt64
+  let floor ← r.floor.get
+  pass.setVertexBuffer 0 (some floor.vertices) 0
+    ((floor.n + 1) * (floor.n + 1) * 8).toUInt64
   for level in [0:app.floor.levels] do
-    let mesh := if level == 0 then r.floor.full else
+    let mesh := if level == 0 then floor.full else
       let (dx, dy) := holeOffset app.floor.spacing level
         app.camera.position.x app.camera.position.z
-      (r.floor.rings[dy * 2 + dx]?).getD r.floor.full
+      (floor.rings[dy * 2 + dx]?).getD floor.full
     let (buffer, count) := pick mesh
     pass.setIndexBuffer buffer .uint32 0 (count.toUInt64 * 4)
     pass.drawIndexed count 1 0 0 level.toUInt32

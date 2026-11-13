@@ -28,7 +28,7 @@ fn snap(x : vec2f, step : f32) -> vec2f {
   let xz = center + lattice * spacing;
   var out : Out;
   out.world = vec3f(xz.x, height(xz), xz.y);
-  out.position = frame.viewProj * vec4f(out.world, 1.0);
+  out.position = frame.viewProj * vec4f(place(out.world), 1.0);
   return out;
 }
 

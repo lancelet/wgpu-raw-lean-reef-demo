@@ -78,7 +78,8 @@ def describe (a : App) : String :=
   let c := a.camera
   let degrees (r : Float) : String := signed (r * 57.2958) 0
   s!"camera {signed c.position.x 1}, {signed c.position.y 1}, \
-    {signed c.position.z 1}  yaw {degrees c.yaw} pitch {degrees c.pitch}"
+    {signed c.position.z 1}  yaw {degrees c.yaw} pitch {degrees c.pitch}  \
+    detail {signed a.detail 2}"
 
 /-- A PPM image (binary, `P6`) of `width` by `height` pixels, from their
 RGBA bytes, rows `row` bytes apart. -/
@@ -140,7 +141,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   if let some path := options.screenshot then
     let (width, height) ← window.size
     let app : App := { width, height }
-    let renderer ← Renderer.create device screenshotFormat app.floor
+    let renderer ← Renderer.create device screenshotFormat app.floorMesh
     screenshot wgpu device renderer app path
     return
   let surface ← window.createSurface wgpu
@@ -149,10 +150,11 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     | throw (IO.userError s!"the surface has no format: {repr status}")
   let alpha := capabilities.alphaModes.getD 0 .auto
   let viewFormat := srgbOf format
-  let renderer ← Renderer.create device viewFormat ({} : Floor)
   let (width, height) ←
     configure window surface device format viewFormat alpha
-  let app ← IO.mkRef ({ width, height } : App)
+  let initial : App := { width, height }
+  let renderer ← Renderer.create device viewFormat initial.floorMesh
+  let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
       configure window surface device format viewFormat alpha
@@ -175,6 +177,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       match command with
       | .toggleFullscreen => toggleFullscreen window
       | .reconfigure => reconfigure
+      | .remesh => renderer.remesh a.floorMesh
     -- No texture: outdated, by a resize not yet seen, or lost, configure
     -- again; timed out, or hidden, try again; and draw in the next frame.
     let draw (texture : Texture) : IO Unit := do

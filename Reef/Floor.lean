@@ -93,10 +93,10 @@ def latticeIndices (n : Nat) (hole : Option (Nat × Nat)) : Indices := Id.run do
 
 /-- One level's index buffers on the GPU: the triangles, and their edges. -/
 structure LevelMesh where
-  triangles : Buffer
+  triangles     : Buffer
   triangleCount : UInt32
-  edges     : Buffer
-  edgeCount : UInt32
+  edges         : Buffer
+  edgeCount     : UInt32
 
 /-- `indices` as buffers on `device`. -/
 def LevelMesh.create (device : Device) (label : String) (indices : Indices) :

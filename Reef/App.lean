@@ -18,6 +18,7 @@ browser), dolly; with Alt, turn in place. The main mouse button, dragged,
 does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
 back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
+`[` and `]` halve and double the detail, how finely every mesh is made;
 F fills the screen, or leaves it; Escape ends the demo, natively.
 -/
 
@@ -48,15 +49,28 @@ structure Grid where
   fade    : Float := 60
   deriving Repr, Inhabited
 
+/--
+How finely every mesh is made, as a factor: 1 as designed, 2 twice as
+fine, and so on; the one knob for the hardware at hand. Each mesh scales
+its own tessellation by it (`Floor.cellsAt`); the renderer makes the meshes
+again when it changes (`Command.remesh`).
+-/
+def Detail := Float
+
 /-- The floor's clipmap (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
 structure Floor where
   /-- The finest level's vertex spacing, in metres. -/
-  spacing : Float := 0.1
-  /-- Cells a side of a level: a multiple of 4. -/
-  cells   : Nat   := 64
+  spacing : Float := 0.05
+  /-- Cells a side of a level at detail 1: a multiple of 4. -/
+  cells   : Nat   := 96
   /-- Levels, each twice the spacing of the one inside it. -/
-  levels  : Nat   := 7
+  levels  : Nat   := 8
   deriving Repr, Inhabited
+
+/-- Cells a side of a level at `detail`: scaled, a multiple of 4, at
+least 8. The finest spacing stays; the finest region grows. -/
+def Floor.cellsAt (f : Floor) (detail : Float) : Nat :=
+  max 8 ((f.cells.toFloat * detail / 4).round.toUInt64.toNat * 4)
 
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
@@ -71,25 +85,32 @@ inductive Command where
   | toggleFullscreen
   /-- The window was resized: configure the surface again. -/
   | reconfigure
+  /-- The detail changed: make the meshes again. -/
+  | remesh
   deriving Repr
 
 structure App where
-  camera   : Camera := Camera.initial
-  held     : Held   := {}
-  grid     : Grid   := {}
-  floor    : Floor  := {}
-  overlays : Overlays := {}
+  camera   : Camera        := Camera.initial
+  held     : Held          := {}
+  grid     : Grid          := {}
+  floor    : Floor         := {}
+  detail   : Float         := 1
+  overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button
   is down. -/
   mouse    : Float × Float := (0, 0)
-  dragging : Bool := false
+  dragging : Bool          := false
   /-- The window's size in pixels. -/
   width    : UInt32
   height   : UInt32
   /-- The last frame's time, in seconds. -/
-  time     : Float := 0
-  quit     : Bool := false
+  time     : Float         := 0
+  quit     : Bool          := false
   deriving Repr, Inhabited
+
+/-- The floor as its mesh is made: its cells at the detail. -/
+def App.floorMesh (a : App) : Floor :=
+  { a.floor with cells := a.floor.cellsAt a.detail }
 
 /--
 How much a wheel event is: a browser's units are pixels, SDL's tenths of
@@ -176,6 +197,10 @@ def update (event : Event) (a : App) : App × List Command :=
     else if code == keyOf '1' then
       ({ a with overlays.wireframe := !a.overlays.wireframe }, [])
     else if code == keyOf '2' then ({ a with overlays.grid := !a.overlays.grid }, [])
+    else if code == keyOf '[' then
+      ({ a with detail := max 0.25 (a.detail / 2) }, [.remesh])
+    else if code == keyOf ']' then
+      ({ a with detail := min 4 (a.detail * 2) }, [.remesh])
     else (a, [])
 
 /-- The state `dt` seconds on: the camera moved by the keys held. -/

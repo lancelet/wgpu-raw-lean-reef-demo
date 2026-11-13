@@ -116,9 +116,10 @@ structure Ripples where
   /-- Ripples across the tile: even. -/
   perTile    : Nat   := 32
   /-- Within this distance of the eye, in metres, the ripples lift the
-  mesh itself; beyond the next, the normal map alone carries them. -/
-  fadeFrom   : Float := 4
-  fadeTo     : Float := 8
+  mesh itself (as far as its cells can carry them); beyond the next, the
+  normal map alone carries them. -/
+  fadeFrom   : Float := 8
+  fadeTo     : Float := 16
   /-- How much the troughs darken, for the sky they cannot see: 0 not at
   all, 1 as the tile says. -/
   cavity     : Float := 0.5

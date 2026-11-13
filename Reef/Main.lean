@@ -113,6 +113,34 @@ def ppm (width height row : Nat) (pixels : ByteArray) : ByteArray := Id.run do
   return out
 
 /--
+The pixels of `texture`, `width` by `height`, four bytes each, read back:
+with the bytes a row takes, which is a multiple of 256.
+-/
+def readback (wgpu : Instance) (device : Device) (texture : Texture)
+    (width height : UInt32) : IO (Nat × ByteArray) := do
+  let row := (width.toNat * 4 + 255) / 256 * 256
+  let size := (row * height.toNat).toUInt64
+  let some buffer ← device.createBuffer
+      { label := "readback", size, usage := .mapRead ||| .copyDst }
+    | throw (IO.userError "no buffer to read the texture back into")
+  let encoder ← device.createCommandEncoder none
+  encoder.copyTextureToBuffer { texture }
+    { layout := { bytesPerRow := row.toUInt32, rowsPerImage := height },
+      buffer }
+    { width, height }
+  (← device.getQueue).submit #[← encoder.finish none]
+  let status ← IO.mkRef none
+  let _ ← buffer.mapAsync .read 0 size .allowProcessEvents fun s _ =>
+    status.set (some (s matches .ok .success))
+  for _ in [0:5000] do
+    if (← status.get).isSome then break
+    wgpu.processEvents
+    IO.sleep 1
+  unless (← status.get) == some true do
+    throw (IO.userError "the texture was not read back")
+  return (row, ← buffer.readMapped 0 size)
+
+/--
 Draw `app`'s one frame into a texture `app.width` by `app.height`, the
 overlay with the camera's line over it, read it back, and write it to
 `path` as a PPM image: as the frame looks, the texture's format the
@@ -133,41 +161,44 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
   renderer.overlay.show s!"{describe app}  patches {← renderer.drawn.get}"
     (textSize height)
   renderer.draw app texture
-  -- A row of the copy, a multiple of 256 bytes.
-  let row := (width.toNat * 4 + 255) / 256 * 256
-  let size := (row * height.toNat).toUInt64
-  let some buffer ← device.createBuffer
-      { label := "screenshot", size, usage := .mapRead ||| .copyDst }
-    | throw (IO.userError "no buffer for the screenshot")
-  let encoder ← device.createCommandEncoder none
-  encoder.copyTextureToBuffer { texture }
-    { layout := { bytesPerRow := row.toUInt32, rowsPerImage := height },
-      buffer }
-    { width, height }
-  (← device.getQueue).submit #[← encoder.finish none]
-  let status ← IO.mkRef none
-  let _ ← buffer.mapAsync .read 0 size .allowProcessEvents fun s _ =>
-    status.set (some (s matches .ok .success))
-  for _ in [0:5000] do
-    if (← status.get).isSome then break
-    wgpu.processEvents
-    IO.sleep 1
-  unless (← status.get) == some true do
-    throw (IO.userError "the screenshot was not read back")
-  IO.FS.writeBinFile path
-    (ppm width.toNat height.toNat row (← buffer.readMapped 0 size))
+  let (row, pixels) ← readback wgpu device texture width height
+  IO.FS.writeBinFile path (ppm width.toNat height.toNat row pixels)
   IO.println s!"Wrote {path}: {width}x{height}, {← renderer.drawn.get} patches."
+
+/--
+Write the ripples' tile, as baked, to `path` as a PPM image, its height
+and its two slopes as red, green and blue, and its cavity, as grey, to
+`path` with `-cavity` before its extension: for looking at the bake.
+-/
+def dumpTile (wgpu : Instance) (device : Device) (renderer : Renderer)
+    (app : App) (path : String) : IO Unit := do
+  let n := app.ripples.texels.toUInt32
+  let (row, pixels) ← readback wgpu device renderer.ripples.texture n n
+  IO.FS.writeBinFile path (ppm n.toNat n.toNat row pixels)
+  let cavity := Id.run do
+    let mut grey := pixels
+    for i in [0:pixels.size / 4] do
+      let a := pixels[i * 4 + 3]!
+      grey := grey.set! (i * 4) a |>.set! (i * 4 + 1) a |>.set! (i * 4 + 2) a
+    return grey
+  let stem := (path.splitOn ".").dropLast
+  let cavityPath := if stem.isEmpty then path ++ "-cavity"
+    else String.intercalate "." stem ++ "-cavity." ++ (path.splitOn ".").getLast!
+  IO.FS.writeBinFile cavityPath (ppm n.toNat n.toNat row cavity)
+  IO.println s!"Wrote {path} and {cavityPath}: {n}x{n}."
 
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     (device : Device) : IO Unit := do
   let window ← options.window 960 540
-  if let some path := options.screenshot then
+  if options.screenshot.isSome || options.tile.isSome then
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
       app.ripples
-    screenshot wgpu device renderer app path
+    if let some path := options.tile then dumpTile wgpu device renderer app path
+    if let some path := options.screenshot then
+      screenshot wgpu device renderer app path
     return
   let surface ← window.createSurface wgpu
   let (status, capabilities) ← surface.getCapabilities adapter
@@ -241,7 +272,7 @@ end Reef
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
-[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES]`. -/
+[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

@@ -25,10 +25,18 @@ fn rippleUV(xz : vec2f) -> vec2f {
   return vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x))) / frame.tiling.x;
 }
 
-// What the ripples add to the floor's height at `xz`, in the world: a
-// crest half their height up, a trough half down.
-fn rippleHeight(xz : vec2f) -> f32 {
-  let h = textureSampleLevel(ripples, rippleSampler, rippleUV(xz), 0.0).r;
+// What the ripples add to the floor's height at `xz`, in the world, for
+// a vertex `dist` from the eye: a crest half their height up, a trough
+// half down, from the tile's mip level smoothed over twice the mesh's
+// cell at that distance (the leaves' within their range, doubling with
+// it), so that the vertices carry what they can and not a sample each
+// of what they cannot, which would be ragged; what is finer than the
+// mesh the normal map keeps.
+fn rippleHeight(xz : vec2f, dist : f32) -> f32 {
+  let texel = frame.tiling.x / f32(textureDimensions(ripples, 0).x);
+  let cell = frame.eye.z * max(1.0, 2.0 * dist / frame.floor.y);
+  let lod = log2(max(1.0, 2.0 * cell / texel));
+  let h = textureSampleLevel(ripples, rippleSampler, rippleUV(xz), lod).r;
   return (h - 0.5) * frame.ripple.w;
 }
 
@@ -44,7 +52,8 @@ fn rippleFade(dist : f32) -> f32 {
 fn floorAt(cellXZ : vec2f) -> vec3f {
   let xz = cellXZ * frame.eye.z - frame.eye.xy;
   let world = xz + frame.camera.xz;
-  let y = height(world) + rippleHeight(world) * rippleFade(length(xz));
+  let dist = length(xz);
+  let y = height(world) + rippleHeight(world, dist) * rippleFade(dist);
   return vec3f(xz.x, y - frame.camera.y, xz.y);
 }
 
@@ -92,15 +101,28 @@ fn morph(dist : f32, level : f32) -> f32 {
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
-  // The floor's slope at this pixel, by differences a pixel's footprint
-  // wide, at least a few centimetres: smooth, whatever the tessellation.
-  let e = max(length(fwidth(world.xz)), 0.03);
-  var slope = floorSlope(world.xz, e);
-  // The ripples' slope, from their tile, filtered to the pixel's
-  // footprint (so that far off, where they are finer than a pixel, they
-  // average away): in heights per wavelength along the waves and across,
-  // made metres per metre, and turned to the world's axes.
-  let tile = textureSample(ripples, rippleSampler, rippleUV(world.xz));
+  let dist = length(in.relative);
+  let view = in.relative / dist;
+  // The pixel's footprint on the floor: its width square on, and, along
+  // the view, longer as the view slants. Found from the pixel's angle and
+  // the floor's slope, not the screen's differences, which at a crest's
+  // silhouette span the gap to the ripple behind, and would fetch the
+  // tile's mean there: a flat normal, a bright line along every crest.
+  let foot = dist * frame.camera.w;
+  // The floor's slope at this pixel, by differences a footprint wide, at
+  // least a few centimetres: smooth, whatever the tessellation.
+  var slope = floorSlope(world.xz, max(foot, 0.03));
+  let floorNormal = normalize(vec3f(-slope.x, 1.0, -slope.y));
+  let slant = max(abs(dot(floorNormal, view)), 0.02);
+  let ahead = select(vec2f(1.0, 0.0), normalize(view.xz), length(view.xz) > 1e-4);
+  let footAlong = ahead * (foot / slant);
+  let footAcross = vec2f(-ahead.y, ahead.x) * foot;
+  // The ripples' slope, from their tile, filtered to that footprint (so
+  // that far off, where they are finer than a pixel, they average away):
+  // in heights per wavelength along the waves and across, made metres
+  // per metre, and turned to the world's axes.
+  let tile = textureSampleGrad(ripples, rippleSampler, rippleUV(world.xz),
+                               rippleUV(footAlong), rippleUV(footAcross));
   let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z;
   let dir = frame.ripple.xy;
   slope += along.x * dir + along.y * vec2f(-dir.y, dir.x);

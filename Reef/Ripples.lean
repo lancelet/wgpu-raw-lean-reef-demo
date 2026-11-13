@@ -73,7 +73,7 @@ def Ripples.bake (device : Device) (r : Ripples) : IO RippleTile := do
   let levels := (Nat.log2 r.texels + 1).toUInt32
   let texture ← device.createTexture {
     label  := "ripples"
-    usage  := .renderAttachment ||| .textureBinding
+    usage  := .renderAttachment ||| .textureBinding ||| .copySrc
     size, format := tileFormat, mipLevelCount := levels
   }
   let heights ← device.createTexture {

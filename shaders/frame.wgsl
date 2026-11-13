@@ -6,7 +6,7 @@
 // of the world's coordinates.
 struct Frame {
   viewProj : mat4x4f,
-  camera   : vec4f,  // where the camera is in the world; w unused
+  camera   : vec4f,  // where the camera is in the world; the angle a pixel subtends, in radians
   grid     : vec4f,  // spacing, major, extent, fade
   floor    : vec4f,  // a patch's cells a side, the leaves' range, the morph fraction, the height's amplitude
   eye      : vec4f,  // the camera's place in its leaf cell (x, z), the cell's size; w unused

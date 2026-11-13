@@ -81,17 +81,17 @@ def far : Float := 2000
 
 /--
 The frame's uniforms, as WGSL lays out its `Frame`: the view and projection
-as one matrix, where the camera is, the grid, the floor (a patch's cells,
+as one matrix, where the camera is (and the angle a pixel subtends), the grid, the floor (a patch's cells,
 the leaves' range, the morph fraction, the height's amplitude), the eye's
 place in its leaf cell, with the cell's size, and the ripples (the waves'
 direction, the wavelength, the height; the tile's width, where the
 displacement fades from and to, the cavity's strength): 160 bytes.
 -/
-def frameBytes (viewProj : Mat4) (camera : Vec3) (grid : Grid)
+def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
     (floor : Floor) (cells : Nat) (ripples : Ripples) : ByteArray :=
   let cell := floor.leaf / cells.toFloat
   let within (x : Float) := x - (x / cell).floor * cell
-  (viewProj.m.toList ++ [camera.x, camera.y, camera.z, 0]
+  (viewProj.m.toList ++ [camera.x, camera.y, camera.z, pixel]
     ++ [grid.spacing, grid.major, grid.extent, grid.fade]
     ++ [cells.toFloat, floor.range, floor.morph, floor.amplitude]
     ++ [within camera.x, within camera.z, cell, 0]
@@ -183,7 +183,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
-    (frameBytes Mat4.identity Vec3.zero {} floor floor.cells ripples)
+    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples)
   let mesh ← FloorMesh.create device floor.cells
   let tile ← ripples.bake device
   let data ← device.createBindGroup {
@@ -257,7 +257,8 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     * Mat4.view Vec3.zero app.camera.right app.camera.up (-app.camera.forward)
   let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
-    (frameBytes viewProj eye app.grid app.floor floor.cells app.ripples)
+    (frameBytes viewProj eye (fovY / (max app.height 1).toFloat) app.grid
+      app.floor floor.cells app.ripples)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0

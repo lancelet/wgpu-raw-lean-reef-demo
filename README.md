@@ -42,8 +42,10 @@ screenshot from a chosen view needs; `--wireframe on|off` and `--grid
 on|off` say whether those show at the start; `--relief FACTOR` and
 `--ripples FACTOR` scale the floor's elevation and its ripples' height,
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
-across. How fast it draws, and where the camera is, are in the bottom
-right.
+across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
+its height and slopes (and its cavity, to a `-cavity` file beside it),
+for looking at the bake. How fast it draws, and where the camera is, are
+in the bottom right.
 
 The camera is driven as a modelling program's viewport, with no modes: two
 fingers on a trackpad (or the wheel) orbit the point it looks at; with

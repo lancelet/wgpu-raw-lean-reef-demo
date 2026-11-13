@@ -6,7 +6,7 @@
 // point in a trough sees, 1 all of it. `shaders/sand.wgsl` reads them.
 //
 // The ripples are phasor noise (Tricard et al., "Procedural Phasor
-// Noise", 2019): a sum of Gaussian kernels, each carrying a plane wave,
+// Noise", 2019): a sum of kernels, bumps, each carrying a plane wave,
 // whose phase, where they interfere, is a field that oscillates at about
 // the ripples' frequency everywhere. Each kernel's wave is the ripples'
 // direction and frequency as a smooth field has them at the kernel: so
@@ -102,8 +102,9 @@ fn waveAt(p : vec2f) -> vec2f {
 // on, the tile repeating), and their weights' sum: the ripples' phase is
 // the sum's argument; its length against the weights' says how far the
 // kernels agree there. The kernels sit in cells two wavelengths wide, a
-// few to a cell, those of the cells around `p` summed; a cell's kernels
-// are those of its cell in the tile, so that the tile repeats.
+// few to a cell, each a bump a cell wide, those of the cells around `p`
+// summed; a cell's kernels are those of its cell in the tile, so that
+// the tile repeats.
 fn phasor(p : vec2f) -> vec3f {
   let disorder = bake.shape.z;
   let cells = bake.shape.x / 2.0;
@@ -120,8 +121,12 @@ fn phasor(p : vec2f) -> vec3f {
           ^ (k * 0xcb1ab31fu);
         let centre = (vec2f(cell) + vec2f(rand(seed, 0u), rand(seed, 1u))) / cells;
         let wave = waveAt(centre);
-        let d = p - centre;
-        let weight = exp(-dot(d, d) * cells * cells * 2.0);
+        // A bump a cell wide, and nothing beyond: the cells around are
+        // all that is summed, and a kernel reaching past them would be
+        // cut off at their edge, a line through the tile.
+        let d = (p - centre) * cells;
+        let r2 = dot(d, d);
+        let weight = select(0.0, (1.0 - r2) * (1.0 - r2), r2 < 1.0);
         // The wave's phase from the tile's origin, not the kernel's: so
         // kernels of one wave agree, and only those of different waves,
         // or put out of step, interfere.
@@ -134,10 +139,18 @@ fn phasor(p : vec2f) -> vec3f {
   return vec3f(sum, weights);
 }
 
+// How far the crests are rounded: a little, so that the normal has no
+// one-texel cusp to show as a line along every crest.
+const rounding = 0.03;
+
 // The height for a phase: 1 at a crest (phase 0), 0 in a trough; the
-// crests sharp and the troughs round, more so the lower the power.
+// crests sharp (though rounded a little) and the troughs round, more so
+// the lower the power.
 fn profile(phi : f32) -> f32 {
-  return 1.0 - pow((1.0 - cos(phi)) * 0.5, bake.shape.w);
+  let p = bake.shape.w;
+  let lo = pow(rounding, p);
+  let hi = pow(1.0 + rounding, p);
+  return 1.0 - (pow((1.0 - cos(phi)) * 0.5 + rounding, p) - lo) / (hi - lo);
 }
 
 // The ripples' height at `p`: the profile of the phase, tapering to the

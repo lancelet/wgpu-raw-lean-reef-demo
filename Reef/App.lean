@@ -17,8 +17,8 @@ As a modelling program's viewport, with no modes: two fingers on a trackpad
 browser), dolly; with Alt, turn in place. The main mouse button, dragged,
 does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
-back where it started; F fills the screen, or leaves it; Escape ends the
-demo, natively.
+back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
+F fills the screen, or leaves it; Escape ends the demo, natively.
 -/
 
 open WebGPU.Window
@@ -48,6 +48,24 @@ structure Grid where
   fade    : Float := 60
   deriving Repr, Inhabited
 
+/-- The floor's clipmap (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
+structure Floor where
+  /-- The finest level's vertex spacing, in metres. -/
+  spacing : Float := 0.1
+  /-- Cells a side of a level: a multiple of 4. -/
+  cells   : Nat   := 64
+  /-- Levels, each twice the spacing of the one inside it. -/
+  levels  : Nat   := 7
+  deriving Repr, Inhabited
+
+/-- What is shown of the scene besides itself: the development overlays. -/
+structure Overlays where
+  /-- Every mesh's edges, as lines over it. -/
+  wireframe : Bool := true
+  /-- The grid, a line a metre at the floor's height. -/
+  grid      : Bool := false
+  deriving Repr, Inhabited
+
 /-- What `update` asks the program to do, which it cannot itself. -/
 inductive Command where
   | toggleFullscreen
@@ -59,6 +77,8 @@ structure App where
   camera   : Camera := Camera.initial
   held     : Held   := {}
   grid     : Grid   := {}
+  floor    : Floor  := {}
+  overlays : Overlays := {}
   /-- The mouse's place, in the window's units, and whether the main button
   is down. -/
   mouse    : Float × Float := (0, 0)
@@ -153,6 +173,9 @@ def update (event : Event) (a : App) : App × List Command :=
     else if code == keyOf 'f' then (a, [.toggleFullscreen])
     else if code == Key.escape && !onWeb then ({ a with quit := true }, [])
     else if code == Key.home then ({ a with camera := Camera.initial }, [])
+    else if code == keyOf '1' then
+      ({ a with overlays.wireframe := !a.overlays.wireframe }, [])
+    else if code == keyOf '2' then ({ a with overlays.grid := !a.overlays.grid }, [])
     else (a, [])
 
 /-- The state `dt` seconds on: the camera moved by the keys held. -/

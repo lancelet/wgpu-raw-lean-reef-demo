@@ -13,7 +13,8 @@ Windows) and in a browser: [see it in yours][pages] (it needs WebGPU).
 
 It is also an example of a package that uses the raw WebGPU bindings,
 [webgpu-raw-lean][bindings], and builds both ways. So far it draws the
-floor the reef will stand on, as a grid, and a camera to look at it with.
+floor the reef will stand on, flat sand as a geometry clipmap, with a grid
+and a wireframe to see it by, and a camera to look at it with.
 
 [bindings]: https://github.com/lancelet/webgpu-raw-lean
 
@@ -42,7 +43,8 @@ fingers on a trackpad (or the wheel) orbit the point it looks at; with
 Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
 Alt, turn in place. The main mouse button, dragged, does the same four.
 W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
-hurries. Home puts the camera back where it started.
+hurries. Home puts the camera back where it started. 1 shows the
+wireframe, or hides it, and 2 the grid.
 
 [elan]: https://github.com/leanprover/elan
 [Nix]: https://nixos.org
@@ -94,7 +96,10 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/App.lean`: the state, and the pure functions that change it, on an
   event and once a frame. What they cannot do themselves they ask the
   program for.
-- `Reef/Render.lean`: the pipelines, and drawing a frame.
+- `Reef/Floor.lean`: the floor's mesh, a geometry clipmap: nested rings
+  of grid around the camera, each twice the spacing of the one inside it.
+- `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
+  which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.
 - `Reef/Stats.lean`: how fast it draws, for the overlay.
 - `Reef/Main.lean`: the program: the shell around the state.

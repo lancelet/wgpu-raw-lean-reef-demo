@@ -59,8 +59,9 @@ def placementBytes (targetWidth targetHeight width height pad : UInt32) :
    f targetWidth - f width - 2 * f pad, f targetHeight - f height - 2 * f pad,
    f width, f height, f pad, 0].foldl pushF32 ByteArray.empty
 
-/-- An overlay, drawing into targets of `format`, with no text yet. -/
-def Overlay.create (device : Device) (format : TextureFormat) :
+/-- An overlay, drawing into targets of `format`, in a pass with a depth
+buffer of `depthFormat`, which it neither tests nor writes; no text yet. -/
+def Overlay.create (device : Device) (format depthFormat : TextureFormat) :
     IO Overlay := do
   let module ← createShader device "overlay" Shaders.overlay
   let pipeline ← device.createRenderPipeline {
@@ -70,6 +71,11 @@ def Overlay.create (device : Device) (format : TextureFormat) :
       module     := module
       entryPoint := some "fs"
       targets    := #[{ format := format, blend := some over }]
+    }
+    depthStencil := some {
+      format            := depthFormat
+      depthWriteEnabled := .false
+      depthCompare      := .always
     }
   }
   return {

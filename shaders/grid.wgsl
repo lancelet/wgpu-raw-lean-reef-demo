@@ -1,17 +1,9 @@
-// The floor: a square at height 0, as far as the grid's extent, with a grid
+// The grid: a square at height 0, as far as the grid's extent, with a grid
 // of lines on it, a line every spacing and a brighter one every major
-// lines, the x and z axes in colour, fading into the background with
-// distance from the camera. Drawn as two triangles; the lines are found in
-// the fragment shader, a pixel wide whatever the distance.
-
-// As `Reef.frameBytes` encodes it: 96 bytes.
-struct Frame {
-  viewProj : mat4x4f,
-  camera   : vec4f,  // where the camera is; w unused
-  grid     : vec4f,  // spacing, major, extent, fade
-}
-
-@group(0) @binding(0) var<uniform> frame : Frame;
+// lines, the x and z axes in colour, fading with distance from the camera.
+// Drawn as two triangles over the floor, the lines found in the fragment
+// shader, a pixel wide whatever the distance, and blended over by their
+// coverage: nothing but the lines shows.
 
 struct Out {
   @builtin(position) position : vec4f,
@@ -47,14 +39,15 @@ fn axis(x : f32) -> f32 {
   let p = in.world.xz / frame.grid.x;
   let minor = line(p);
   let major = line(p / frame.grid.y);
-  let background = vec3f(0.02, 0.05, 0.09);
-  var color = vec3f(0.05, 0.08, 0.11);
-  color = mix(color, vec3f(0.22, 0.30, 0.38), minor * 0.7);
+  let x = axis(in.world.z);
+  let z = axis(in.world.x);
+  var color = vec3f(0.22, 0.30, 0.38);
   color = mix(color, vec3f(0.45, 0.60, 0.70), major);
   // The axes: x in red, z in blue.
-  color = mix(color, vec3f(0.9, 0.3, 0.3), axis(in.world.z));
-  color = mix(color, vec3f(0.3, 0.5, 1.0), axis(in.world.x));
+  color = mix(color, vec3f(0.9, 0.3, 0.3), x);
+  color = mix(color, vec3f(0.3, 0.5, 1.0), z);
+  let coverage = max(max(minor * 0.7, major), max(x, z));
   let dist = length(in.world - frame.camera.xyz);
-  let fade = exp(-dist / frame.grid.w);
-  return vec4f(mix(background, color, fade), 1.0);
+  let fade = visible(dist);
+  return vec4f(color, coverage * fade);
 }

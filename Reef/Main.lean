@@ -139,8 +139,9 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let window ← options.window 960 540
   if let some path := options.screenshot then
     let (width, height) ← window.size
-    let renderer ← Renderer.create device screenshotFormat
-    screenshot wgpu device renderer { width, height } path
+    let app : App := { width, height }
+    let renderer ← Renderer.create device screenshotFormat app.floor
+    screenshot wgpu device renderer app path
     return
   let surface ← window.createSurface wgpu
   let (status, capabilities) ← surface.getCapabilities adapter
@@ -148,7 +149,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     | throw (IO.userError s!"the surface has no format: {repr status}")
   let alpha := capabilities.alphaModes.getD 0 .auto
   let viewFormat := srgbOf format
-  let renderer ← Renderer.create device viewFormat
+  let renderer ← Renderer.create device viewFormat ({} : Floor)
   let (width, height) ←
     configure window surface device format viewFormat alpha
   let app ← IO.mkRef ({ width, height } : App)

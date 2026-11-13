@@ -4,8 +4,8 @@ import Reef.Math
 /-!
 # The floor's mesh: a quadtree, chosen by distance
 
-The floor is a square, a quadtree of patches: the root the whole square,
-each node's four children its quarters, down to leaves a few metres wide.
+The floor is a quadtree of patches: the root a square wherever the eye is,
+each node's four children its quarters, down to leaves well under a metre.
 Each frame the eye picks the nodes to draw (Strugar, "Continuous
 Distance-Dependent Level of Detail", 2009): a node is drawn at its own
 level if it lies beyond its level's range, which doubles with each level
@@ -107,9 +107,10 @@ structure Node where
   level : Nat
   deriving Repr, Inhabited
 
-/-- `nodes` as the shader reads them: four floats each. -/
-def Node.bytes (nodes : Array Node) : ByteArray :=
-  nodes.foldl (fun b n => [n.x, n.z, n.size, n.level.toFloat].foldl pushF32 b)
+/-- `nodes` as the shader reads them, relative to `eye`: four floats each. -/
+def Node.bytes (nodes : Array Node) (eye : Vec3) : ByteArray :=
+  nodes.foldl
+    (fun b n => [n.x - eye.x, n.z - eye.z, n.size, n.level.toFloat].foldl pushF32 b)
     ByteArray.empty
 
 /-- How the quadtree is chosen: the leaves' size and range, how many levels
@@ -134,21 +135,25 @@ def within (eye : Vec3) (x z size r : Float) (relief : Float) : Bool :=
   (nearest - eye).length < r
 
 /--
-The nodes to draw, from `eye` inside `frustum`: the quadtree's, from the
-root, each at its own level where it lies beyond its level's range, else
-its children; none outside the view.
+The nodes to draw, from `eye` inside `frustum` (which is relative to the
+eye, as what is drawn is): the quadtree's, from the root, each at its own
+level where it lies beyond its level's range, else its children; none
+outside the view. The root is wherever the eye is, snapped to half its
+width: so every node's lattice is the same wherever the root goes, the
+floor has no edge, and the eye is never nearer one than half the root.
 -/
 def Quadtree.select (q : Quadtree) (eye : Vec3) (frustum : Frustum) :
     Array Node := Id.run do
   let root := q.leaf * (2 : Float) ^ q.depth.toFloat
+  let snap (x : Float) : Float := (x / (root / 2)).floor * (root / 2) - root / 2
   let mut out := #[]
   -- Nodes to try: where, how big, which level.
-  let mut stack : Array Node := #[⟨-root / 2, -root / 2, root, q.depth⟩]
+  let mut stack : Array Node := #[⟨snap eye.x, snap eye.z, root, q.depth⟩]
   while !stack.isEmpty do
     let n := stack.back!
     stack := stack.pop
-    unless frustum.intersectsBox ⟨n.x, -q.relief, n.z⟩
-        ⟨n.x + n.size, q.relief, n.z + n.size⟩ do continue
+    unless frustum.intersectsBox (⟨n.x, -q.relief, n.z⟩ - eye)
+        (⟨n.x + n.size, q.relief, n.z + n.size⟩ - eye) do continue
     -- Beyond the finer range, or a leaf: this node, at its level.
     if n.level == 0 || !within eye n.x n.z n.size (q.rangeOf (n.level - 1)) q.relief
     then

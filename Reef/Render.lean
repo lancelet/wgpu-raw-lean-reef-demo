@@ -12,6 +12,11 @@ this frame, drawn at once; over it, if shown, its wireframe
 over; then the overlay's text over all (`Reef/Overlay.lean`). The
 background is the colour the floor fades into.
 
+Everything is drawn relative to the camera, which the view matrix puts at
+the origin: far from the world's origin, the floats the GPU works in would
+jitter. The shaders get the camera's place in the world besides, for what
+is a function of it (the floor's height, the grid's lines).
+
 ## The wireframe
 
 Every material's shader gets the frame's uniforms (`Shaders.frame`) and
@@ -222,14 +227,17 @@ view in the renderer's format (the texture's own, or one it allows).
 def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     IO Unit := do
   let aspect := app.width.toFloat / (max app.height 1).toFloat
-  let viewProj := Mat4.perspective fovY aspect near far * app.camera.view
+  -- Everything is drawn relative to the camera, at the origin: far from
+  -- the world's origin, floats would jitter.
+  let eye := app.camera.position
+  let viewProj := Mat4.perspective fovY aspect near far
+    * Mat4.view Vec3.zero app.camera.right app.camera.up (-app.camera.forward)
   let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
-    (frameBytes viewProj app.camera.position app.grid app.floor floor.cells)
+    (frameBytes viewProj eye app.grid app.floor floor.cells)
   -- The floor's nodes for this eye and view.
-  let nodes := app.floor.quadtree.select app.camera.position
-    (Frustum.ofMatrix viewProj)
-  r.queue.writeBuffer floor.nodes 0 (Node.bytes nodes)
+  let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
+  r.queue.writeBuffer floor.nodes 0 (Node.bytes nodes eye)
   r.drawn.set nodes.size
   let count := nodes.size.toUInt32
   let view ← texture.createView (some { format := r.format })

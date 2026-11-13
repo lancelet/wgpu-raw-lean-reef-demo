@@ -1,26 +1,27 @@
 import Reef.Gpu
+import Reef.Math
 
 /-!
-# The floor's mesh: a geometry clipmap
+# The floor's mesh: a quadtree, chosen by distance
 
-The floor is drawn as nested square rings of grid around the camera, each
-ring with twice the vertex spacing of the one inside it (Losasso and Hoppe,
-"Geometry Clipmaps", 2004): as many vertices near the camera as far from
-it, and a constant count whatever the view. One lattice of vertices serves
-every level; the vertex shader (`shaders/sand.wgsl`) places it at the
-level's spacing around the camera, snapped to the level's own lattice so
-that nothing swims as the camera moves, and lifts it to the floor's height.
+The floor is a square, a quadtree of patches: the root the whole square,
+each node's four children its quarters, down to leaves a few metres wide.
+Each frame the eye picks the nodes to draw (Strugar, "Continuous
+Distance-Dependent Level of Detail", 2009): a node is drawn at its own
+level if it lies beyond its level's range, which doubles with each level
+up; else its children are tried in turn. Nodes outside the view are
+dropped. So the patches under the eye are the finest, and those far from
+it coarse, whichever way the eye looks, and however high it is.
 
-A level's lattice has `n` cells a side, `n + 1` vertices. The innermost
-level draws all of it; each level outside draws it with a hole of `n / 2`
-cells a side where the level inside sits. That level is snapped to a finer
-lattice, so the hole is offset by 0 or 1 cell in each axis: four index
-buffers, one for each offset, chosen each frame.
+Every node is the one lattice patch, `cells` a side, placed and scaled by
+the node's record in a storage buffer (`shaders/sand.wgsl`), which draws
+them all at once. Near a node's range the vertex shader morphs its lattice
+onto its parent's, so that a node and its neighbour at the next level meet
+with no crack, and a level changes with no pop.
 
-For the wireframe, each index buffer has a companion: its triangles with
-no indices, every corner its own vertex, so that each can say which corner
-it is (`shaders/wire.wgsl`), drawn with the same vertex shader
-(`Reef/Render.lean`).
+For the wireframe, the patch has a companion: its triangles with no
+indices, every corner its own vertex, so that each can say which corner it
+is (`shaders/wire.wgsl`), drawn with the same vertex shader.
 -/
 
 open WebGPU.Raw
@@ -32,112 +33,131 @@ def pushU32 (bytes : ByteArray) (x : UInt32) : ByteArray :=
   bytes |>.push x.toUInt8 |>.push (x >>> 8).toUInt8
     |>.push (x >>> 16).toUInt8 |>.push (x >>> 24).toUInt8
 
-/-- The indices of a triangle list. -/
-structure Indices where
-  triangles : Array UInt32
+/--
+The patch's vertices, `cells + 1` a side, as pairs of floats: the lattice
+coordinates, `0` to `cells`, row by row (the second coordinate the slower).
+Vertex `(i, j)` is at index `j * (cells + 1) + i`.
+-/
+def latticeVertices (cells : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  for j in [0:cells + 1] do
+    for i in [0:cells + 1] do
+      out := pushF32 (pushF32 out i.toFloat) j.toFloat
+  return out
 
-/-- `is` as little-endian bytes. -/
-def Indices.bytes (is : Array UInt32) : ByteArray := is.foldl pushU32 ByteArray.empty
+/-- The patch's triangles, two a cell, as indices. -/
+def latticeIndices (cells : Nat) : Array UInt32 := Id.run do
+  let vertex (i j : Nat) : UInt32 := (j * (cells + 1) + i).toUInt32
+  let mut triangles := #[]
+  for j in [0:cells] do
+    for i in [0:cells] do
+      triangles := triangles
+        |>.push (vertex i j) |>.push (vertex (i + 1) j) |>.push (vertex i (j + 1))
+        |>.push (vertex (i + 1) j) |>.push (vertex (i + 1) (j + 1))
+        |>.push (vertex i (j + 1))
+  return triangles
 
 /-- The triangles' vertices with no indices, each corner its own, from the
 vertices `vertices`, `stride` bytes each. -/
-def Indices.expanded (is : Array UInt32) (vertices : ByteArray) (stride : Nat) :
+def expanded (indices : Array UInt32) (vertices : ByteArray) (stride : Nat) :
     ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity (is.size * stride)
-  for i in is do
+  let mut out := ByteArray.emptyWithCapacity (indices.size * stride)
+  for i in indices do
     out := out ++ vertices.extract (i.toNat * stride) ((i.toNat + 1) * stride)
   return out
 
-/--
-The lattice's vertices, `n + 1` a side, as pairs of floats: the lattice
-coordinates, `-n / 2` to `n / 2`, row by row (the second coordinate the
-slower). Vertex `(i, j)` is at index `j * (n + 1) + i`.
--/
-def latticeVertices (n : Nat) : ByteArray := Id.run do
-  let mut out := ByteArray.empty
-  for j in [0:n + 1] do
-    for i in [0:n + 1] do
-      out := pushF32 (pushF32 out (i.toFloat - n.toFloat / 2))
-        (j.toFloat - n.toFloat / 2)
-  return out
-
-/--
-The lattice's triangles, two a cell, leaving out the cells of the hole if
-`hole` says where it is: `some (dx, dy)` for the `n / 2` by `n / 2` cells
-from cell `(n / 4 + dx, n / 4 + dy)`; `none` for no hole, the innermost
-level.
--/
-def latticeIndices (n : Nat) (hole : Option (Nat × Nat)) : Indices := Id.run do
-  let vertex (i j : Nat) : UInt32 := (j * (n + 1) + i).toUInt32
-  let inHole (i j : Nat) : Bool := match hole with
-    | some (dx, dy) =>
-      n / 4 + dx ≤ i && i < 3 * n / 4 + dx && n / 4 + dy ≤ j && j < 3 * n / 4 + dy
-    | none => false
-  let mut triangles := #[]
-  for j in [0:n] do
-    for i in [0:n] do
-      unless inHole i j do
-        triangles := triangles
-          |>.push (vertex i j) |>.push (vertex (i + 1) j) |>.push (vertex i (j + 1))
-          |>.push (vertex (i + 1) j) |>.push (vertex (i + 1) (j + 1))
-          |>.push (vertex i (j + 1))
-  return { triangles }
-
-/-- One level's buffers on the GPU: its triangles' indices, and the same
-triangles with no indices, for the wireframe. -/
-structure LevelMesh where
+/-- The floor's mesh on the GPU: the patch, indexed, and expanded for the
+wireframe; and the nodes drawn this frame, as the shader reads them. -/
+structure FloorMesh where
+  /-- Cells a side of the patch. -/
+  cells         : Nat
+  vertices      : Buffer
   triangles     : Buffer
   triangleCount : UInt32
   wire          : Buffer
   wireCount     : UInt32
+  /-- The nodes' records: `origin.x`, `origin.z`, size, level, each. -/
+  nodes         : Buffer
 
-/-- `indices` as buffers on `device`, the wireframe's from `vertices`. -/
-def LevelMesh.create (device : Device) (label : String) (indices : Indices)
-    (vertices : ByteArray) : IO LevelMesh := do
+/-- As many nodes as the buffer holds. -/
+def maxNodes : Nat := 4096
+
+/-- The floor's mesh, `cells` a side of the patch. -/
+def FloorMesh.create (device : Device) (cells : Nat) : IO FloorMesh := do
+  let lattice := latticeVertices cells
+  let indices := latticeIndices cells
   return {
-    triangles     := ← createBuffer device s!"{label} triangles" .index
-      (Indices.bytes indices.triangles)
-    triangleCount := indices.triangles.size.toUInt32
-    wire          := ← createBuffer device s!"{label} wire" .vertex
-      (Indices.expanded indices.triangles vertices 8)
-    wireCount     := indices.triangles.size.toUInt32
+    cells
+    vertices      := ← createBuffer device "lattice" .vertex lattice
+    triangles     := ← createBuffer device "triangles" .index
+      (indices.foldl pushU32 ByteArray.empty)
+    triangleCount := indices.size.toUInt32
+    wire          := ← createBuffer device "wire" .vertex (expanded indices lattice 8)
+    wireCount     := indices.size.toUInt32
+    nodes         := ← createBuffer device "nodes" .storage
+      (ByteArray.mk (Array.replicate (maxNodes * 16) 0))
   }
 
-/-- The floor's mesh: the lattice, and the index buffers each level uses. -/
-structure FloorMesh where
-  /-- Cells a side of a level. -/
-  n        : Nat
-  vertices : Buffer
-  /-- The innermost level's, with no hole. -/
-  full     : LevelMesh
-  /-- The other levels', by the hole's offset: `(dx, dy)` at `dy * 2 + dx`. -/
-  rings    : Array LevelMesh
+/-- A node of the quadtree, drawn: its corner nearest the origin, its size,
+and its level, 0 the leaves. -/
+structure Node where
+  x     : Float
+  z     : Float
+  size  : Float
+  level : Nat
+  deriving Repr, Inhabited
 
-/-- The floor's mesh, `n` cells a side a level (`n` a multiple of 4). -/
-def FloorMesh.create (device : Device) (n : Nat) : IO FloorMesh := do
-  let lattice := latticeVertices n
-  let mut rings := #[]
-  for dy in [0:2] do
-    for dx in [0:2] do
-      rings := rings.push (← LevelMesh.create device s!"ring {dx} {dy}"
-        (latticeIndices n (some (dx, dy))) lattice)
-  return {
-    n, rings
-    vertices := ← createBuffer device "lattice" .vertex lattice
-    full     := ← LevelMesh.create device "full" (latticeIndices n none) lattice
-  }
+/-- `nodes` as the shader reads them: four floats each. -/
+def Node.bytes (nodes : Array Node) : ByteArray :=
+  nodes.foldl (fun b n => [n.x, n.z, n.size, n.level.toFloat].foldl pushF32 b)
+    ByteArray.empty
+
+/-- How the quadtree is chosen: the leaves' size and range, how many levels
+up the root is, and where morphing begins, as a fraction of a range. -/
+structure Quadtree where
+  leaf   : Float
+  range  : Float
+  depth  : Nat
+  morph  : Float
+  /-- How far above and below 0 the floor may reach, for culling. -/
+  relief : Float
+
+/-- The range of level `level`: the leaves' doubled each level up. -/
+def Quadtree.rangeOf (q : Quadtree) (level : Nat) : Float :=
+  q.range * (2 : Float) ^ level.toFloat
+
+/-- Whether the square from `(x, z)` of `size` comes within `r` of `eye`. -/
+def within (eye : Vec3) (x z size r : Float) (relief : Float) : Bool :=
+  let clamp (v lo hi : Float) := min hi (max lo v)
+  let nearest : Vec3 := ⟨clamp eye.x x (x + size), clamp eye.y (-relief) relief,
+                         clamp eye.z z (z + size)⟩
+  (nearest - eye).length < r
 
 /--
-The hole's offset in level `level`'s lattice, in cells, for the level inside
-it: 0 or 1 in each axis. Level `l`'s lattice, spaced `s * 2 ^ l`, is snapped
-to twice that (as `shaders/sand.wgsl` snaps it), so the level inside is
-offset from this one by 0 or one cell.
+The nodes to draw, from `eye` inside `frustum`: the quadtree's, from the
+root, each at its own level where it lies beyond its level's range, else
+its children; none outside the view.
 -/
-def holeOffset (s : Float) (level : Nat) (cx cz : Float) : Nat × Nat :=
-  let spacing := s * (2 : Float) ^ level.toFloat
-  let snap (x : Float) (step : Float) : Float := (x / step).floor * step
-  let dx := (snap cx spacing - snap cx (2 * spacing)) / spacing
-  let dz := (snap cz spacing - snap cz (2 * spacing)) / spacing
-  ((dx + 0.5).floor.toUInt32.toNat, (dz + 0.5).floor.toUInt32.toNat)
+def Quadtree.select (q : Quadtree) (eye : Vec3) (frustum : Frustum) :
+    Array Node := Id.run do
+  let root := q.leaf * (2 : Float) ^ q.depth.toFloat
+  let mut out := #[]
+  -- Nodes to try: where, how big, which level.
+  let mut stack : Array Node := #[⟨-root / 2, -root / 2, root, q.depth⟩]
+  while !stack.isEmpty do
+    let n := stack.back!
+    stack := stack.pop
+    unless frustum.intersectsBox ⟨n.x, -q.relief, n.z⟩
+        ⟨n.x + n.size, q.relief, n.z + n.size⟩ do continue
+    -- Beyond the finer range, or a leaf: this node, at its level.
+    if n.level == 0 || !within eye n.x n.z n.size (q.rangeOf (n.level - 1)) q.relief
+    then
+      if out.size < maxNodes then out := out.push n
+    else
+      let half := n.size / 2
+      for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] do
+        stack := stack.push ⟨n.x + dx.toFloat * half, n.z + dz.toFloat * half,
+                             half, n.level - 1⟩
+  return out
 
 end Reef

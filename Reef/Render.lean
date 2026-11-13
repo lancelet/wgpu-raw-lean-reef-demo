@@ -5,11 +5,12 @@ import Reef.Overlay
 /-!
 # Drawing
 
-One render pass, with a depth buffer: the sand, the floor's clipmap
-(`Reef/Floor.lean`, `shaders/sand.wgsl`), level by level; over it, if
-shown, its wireframe (`shaders/wire.wgsl`), and the grid
-(`shaders/grid.wgsl`), each blended over; then the overlay's text over all
-(`Reef/Overlay.lean`). The background is the colour the floor fades into.
+One render pass, with a depth buffer: the sand, the floor's quadtree
+(`Reef/Floor.lean`, `shaders/sand.wgsl`), the nodes chosen for the eye
+this frame, drawn at once; over it, if shown, its wireframe
+(`shaders/wire.wgsl`), and the grid (`shaders/grid.wgsl`), each blended
+over; then the overlay's text over all (`Reef/Overlay.lean`). The
+background is the colour the floor fades into.
 
 ## The wireframe
 
@@ -54,6 +55,8 @@ structure Renderer where
   data     : BindGroup
   /-- The floor's mesh: made again when the detail changes (`remesh`). -/
   floor    : IO.Ref FloorMesh
+  /-- How many of the floor's nodes the last frame drew, for the overlay. -/
+  drawn    : IO.Ref Nat
   /-- The depth buffer, once a frame has been drawn, for its size. -/
   depth    : IO.Ref (Option Depth)
   /-- The text over it all. -/
@@ -68,14 +71,20 @@ def far : Float := 2000
 
 /--
 The frame's uniforms, as WGSL lays out its `Frame`: the view and projection
-as one matrix, where the camera is, the grid, and the floor: 112 bytes.
+as one matrix, where the camera is, the grid, and the floor (a patch's
+cells, the leaves' range, the morph fraction): 112 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Vec3) (grid : Grid)
-    (floor : Floor) : ByteArray :=
+    (floor : Floor) (cells : Nat) : ByteArray :=
   (viewProj.m.toList ++ [camera.x, camera.y, camera.z, 0]
     ++ [grid.spacing, grid.major, grid.extent, grid.fade]
-    ++ [floor.spacing, floor.cells.toFloat, floor.levels.toFloat, 0]).foldl
+    ++ [cells.toFloat, floor.range, floor.morph, 0]).foldl
     pushF32 ByteArray.empty
+
+/-- The floor's quadtree, as `floor` says. -/
+def Floor.quadtree (f : Floor) : Quadtree :=
+  { leaf := f.leaf, range := f.range, depth := f.depth, morph := f.morph,
+    relief := f.relief }
 
 /-- Drawn over what is there, as much as it is opaque: the overlays. -/
 def overBlend : BlendState := {
@@ -123,12 +132,17 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
 /-- A renderer drawing into targets of `format`, the floor `floor`. -/
 def Renderer.create (device : Device) (format : TextureFormat)
     (floor : Floor) : IO Renderer := do
-  -- One layout for every pipeline here: the frame's uniforms, so that one
-  -- bind group serves them all (a pipeline's own layout is exclusive to it).
+  -- One layout for every pipeline here: the frame's uniforms, and the
+  -- floor's nodes, so that one bind group serves them all (a pipeline's own
+  -- layout is exclusive to it).
   let frameLayout ← device.createBindGroupLayout {
     label   := "frame"
-    entries := #[{ binding := 0, visibility := .vertex ||| .fragment,
-                   buffer := { type := .uniform } }]
+    entries := #[
+      { binding := 0, visibility := .vertex ||| .fragment,
+        buffer := { type := .uniform } },
+      { binding := 1, visibility := .vertex,
+        buffer := { type := .readOnlyStorage } }
+    ]
   }
   let layout ← device.createPipelineLayout {
     label := "frame", bindGroupLayouts := #[frameLayout]
@@ -145,23 +159,31 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
-    (frameBytes Mat4.identity Vec3.zero {} floor)
+    (frameBytes Mat4.identity Vec3.zero {} floor floor.cells)
+  let mesh ← FloorMesh.create device floor.cells
   let data ← device.createBindGroup {
     label   := "frame"
     layout  := frameLayout
-    entries := #[{ binding := 0, buffer := some frame }]
+    entries := #[
+      { binding := 0, buffer := some frame },
+      { binding := 1, buffer := some mesh.nodes }
+    ]
   }
   return {
     device, format, sand, sandWire, grid, frame, data
     queue   := ← device.getQueue
-    floor   := ← IO.mkRef (← FloorMesh.create device floor.cells)
+    floor   := ← IO.mkRef mesh
+    drawn   := ← IO.mkRef 0
     depth   := ← IO.mkRef none
     overlay := ← Overlay.create device format depthFormat
   }
 
-/-- The floor's mesh made again, for `floor` as it is now. -/
+/-- The floor's mesh made again, for `floor` as it is now: its patch; the
+nodes' buffer stays, bound as it is. -/
 def Renderer.remesh (r : Renderer) (floor : Floor) : IO Unit := do
-  r.floor.set (← FloorMesh.create r.device floor.cells)
+  let old ← r.floor.get
+  let mesh ← FloorMesh.create r.device floor.cells
+  r.floor.set { mesh with nodes := old.nodes }
 
 /-- The depth buffer for a target `width` by `height`: made anew if the
 size is new. -/
@@ -178,26 +200,20 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
   r.depth.set (some d)
   return d
 
-/-- Draw the floor's levels: indexed, or, for the wireframe (`wire`), the
-same triangles with no indices. -/
-def Renderer.drawFloor (r : Renderer) (pass : RenderPassEncoder) (app : App)
-    (wire : Bool) : IO Unit := do
+/-- Draw the floor's `count` nodes, the patch once each: indexed, or, for
+the wireframe (`wire`), the same triangles with no indices. -/
+def Renderer.drawFloor (r : Renderer) (pass : RenderPassEncoder)
+    (count : UInt32) (wire : Bool) : IO Unit := do
   let floor ← r.floor.get
-  unless wire do
+  if wire then
+    pass.setVertexBuffer 0 (some floor.wire) 0 (floor.wireCount.toUInt64 * 8)
+    pass.draw floor.wireCount count 0 0
+  else
     pass.setVertexBuffer 0 (some floor.vertices) 0
-      ((floor.n + 1) * (floor.n + 1) * 8).toUInt64
-  for level in [0:app.floor.levels] do
-    let mesh := if level == 0 then floor.full else
-      let (dx, dy) := holeOffset app.floor.spacing level
-        app.camera.position.x app.camera.position.z
-      (floor.rings[dy * 2 + dx]?).getD floor.full
-    if wire then
-      pass.setVertexBuffer 0 (some mesh.wire) 0 (mesh.wireCount.toUInt64 * 8)
-      pass.draw mesh.wireCount 1 0 level.toUInt32
-    else
-      pass.setIndexBuffer mesh.triangles .uint32 0
-        (mesh.triangleCount.toUInt64 * 4)
-      pass.drawIndexed mesh.triangleCount 1 0 0 level.toUInt32
+      ((floor.cells + 1) * (floor.cells + 1) * 8).toUInt64
+    pass.setIndexBuffer floor.triangles .uint32 0
+      (floor.triangleCount.toUInt64 * 4)
+    pass.drawIndexed floor.triangleCount count 0 0 0
 
 /--
 Draw `app`'s scene into `texture`, `app.width` by `app.height`, through a
@@ -207,8 +223,15 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     IO Unit := do
   let aspect := app.width.toFloat / (max app.height 1).toFloat
   let viewProj := Mat4.perspective fovY aspect near far * app.camera.view
+  let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
-    (frameBytes viewProj app.camera.position app.grid app.floor)
+    (frameBytes viewProj app.camera.position app.grid app.floor floor.cells)
+  -- The floor's nodes for this eye and view.
+  let nodes := app.floor.quadtree.select app.camera.position
+    (Frustum.ofMatrix viewProj)
+  r.queue.writeBuffer floor.nodes 0 (Node.bytes nodes)
+  r.drawn.set nodes.size
+  let count := nodes.size.toUInt32
   let view ← texture.createView (some { format := r.format })
   let depth ← r.depthFor app.width app.height
   let encoder ← r.device.createCommandEncoder none
@@ -228,10 +251,10 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   }
   pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.sand
-  r.drawFloor pass app (wire := false)
+  r.drawFloor pass count (wire := false)
   if app.overlays.wireframe then
     pass.setPipeline r.sandWire
-    r.drawFloor pass app (wire := true)
+    r.drawFloor pass count (wire := true)
   if app.overlays.grid then
     pass.setPipeline r.grid
     pass.draw 6 1 0 0

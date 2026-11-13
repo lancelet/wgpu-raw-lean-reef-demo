@@ -24,10 +24,13 @@ fn barycentric(index : u32) -> vec3f {
   let d = bary / width;
   let edge = min(min(d.x, d.y), d.z);
   let line = 1.0 - smoothstep(0.3, 1.0, edge);
-  // The triangle's size on the screen, in pixels, about: the lines go as
-  // it falls below six, gone at two.
-  let size = 1.0 / length(width);
-  let alpha = line * smoothstep(2.0, 6.0, size);
+  // The triangle's size on the screen, in pixels, about (the mean of its
+  // longest and shortest, as a foreshortened one is long one way): the
+  // lines go as it falls below three pixels, gone at one.
+  let longest = 1.0 / min(min(width.x, width.y), width.z);
+  let shortest = 1.0 / max(max(width.x, width.y), width.z);
+  let size = sqrt(longest * shortest);
+  let alpha = line * smoothstep(1.0, 3.0, size);
   if (alpha < 0.004) {
     discard;
   }

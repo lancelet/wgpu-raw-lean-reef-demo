@@ -88,4 +88,43 @@ def view (eye right up back : Vec3) : Mat4 :=
 
 end Mat4
 
+/-- A plane, `normal · p + offset ≥ 0` on its inside. -/
+structure Plane where
+  normal : Vec3
+  offset : Float
+  deriving Repr, Inhabited
+
+/-- The view frustum, as its six planes, insides inward. -/
+structure Frustum where
+  planes : Array Plane
+  deriving Repr, Inhabited
+
+namespace Frustum
+
+/-- The frustum of `viewProj`, for WebGPU's clip space (depth 0 to 1): the
+matrix's rows added to and taken from its last. -/
+def ofMatrix (m : Mat4) : Frustum :=
+  let row (i : Nat) : Array Float := #[m.entry i 0, m.entry i 1, m.entry i 2, m.entry i 3]
+  let plane (r : Array Float) : Plane :=
+    let n : Vec3 := ⟨r[0]!, r[1]!, r[2]!⟩
+    let l := n.length
+    { normal := (1 / l) * n, offset := r[3]! / l }
+  let add (a b : Array Float) := (Array.range 4).map fun i => a[i]! + b[i]!
+  let sub (a b : Array Float) := (Array.range 4).map fun i => a[i]! - b[i]!
+  let last := row 3
+  ⟨#[plane (add last (row 0)), plane (sub last (row 0)),
+     plane (add last (row 1)), plane (sub last (row 1)),
+     plane (row 2), plane (sub last (row 2))]⟩
+
+/-- Whether the box from `lo` to `hi` is inside, or crosses, the frustum. -/
+def intersectsBox (f : Frustum) (lo hi : Vec3) : Bool :=
+  f.planes.all fun p =>
+    -- The box's corner furthest along the normal: outside if even it is.
+    let corner : Vec3 := ⟨if p.normal.x ≥ 0 then hi.x else lo.x,
+                          if p.normal.y ≥ 0 then hi.y else lo.y,
+                          if p.normal.z ≥ 0 then hi.z else lo.z⟩
+    p.normal.dot corner + p.offset ≥ 0
+
+end Frustum
+
 end Reef

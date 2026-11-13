@@ -13,8 +13,9 @@ Windows) and in a browser: [see it in yours][pages] (it needs WebGPU).
 
 It is also an example of a package that uses the raw WebGPU bindings,
 [webgpu-raw-lean][bindings], and builds both ways. So far it draws the
-floor the reef will stand on, flat sand as a geometry clipmap, with a grid
-and a wireframe to see it by, and a camera to look at it with.
+floor the reef will stand on, flat sand as a quadtree of patches chosen by
+their distance from the eye, with a grid and a wireframe to see it by, and
+a camera to look at it with.
 
 [bindings]: https://github.com/lancelet/webgpu-raw-lean
 
@@ -35,8 +36,10 @@ It fills the screen; F leaves it, or fills it again, and Escape ends it.
 `reef --windowed` draws in a window instead; `reef --frames N` ends after
 `N` frames; `reef --headless` draws with no display (macOS only);
 `reef --screenshot FILE` draws one frame into that file, a PPM image, and
-ends (with `--headless`, with no display at all). How fast it draws, and
-where the camera is, are in the bottom right.
+ends (with `--headless`, with no display at all); `reef --camera
+X,Y,Z,YAW,PITCH` starts the camera there (metres, and degrees), as a
+screenshot from a chosen view needs. How fast it draws, and where the
+camera is, are in the bottom right.
 
 The camera is driven as a modelling program's viewport, with no modes: two
 fingers on a trackpad (or the wheel) orbit the point it looks at; with
@@ -97,8 +100,9 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/App.lean`: the state, and the pure functions that change it, on an
   event and once a frame. What they cannot do themselves they ask the
   program for.
-- `Reef/Floor.lean`: the floor's mesh, a geometry clipmap: nested rings
-  of grid around the camera, each twice the spacing of the one inside it.
+- `Reef/Floor.lean`: the floor's mesh, a quadtree of one patch, its nodes
+  chosen each frame by their distance from the eye, morphing between
+  levels.
 - `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.

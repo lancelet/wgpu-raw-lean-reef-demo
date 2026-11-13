@@ -57,20 +57,28 @@ again when it changes (`Command.remesh`).
 -/
 def Detail := Float
 
-/-- The floor's clipmap (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
+/-- The floor's quadtree (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
 structure Floor where
-  /-- The finest level's vertex spacing, in metres. -/
-  spacing : Float := 0.05
-  /-- Cells a side of a level at detail 1: a multiple of 4. -/
-  cells   : Nat   := 96
-  /-- Levels, each twice the spacing of the one inside it. -/
-  levels  : Nat   := 8
+  /-- A leaf patch's width, in metres. -/
+  leaf   : Float := 1.6
+  /-- Cells a side of a patch at detail 1: even. -/
+  cells  : Nat   := 32
+  /-- Levels above the leaves: the floor is `leaf * 2 ^ depth` wide. -/
+  depth  : Nat   := 10
+  /-- How far from the eye the leaves are drawn, in metres: each level up,
+  twice as far. -/
+  range  : Float := 6
+  /-- Where a node begins to morph onto its parent: this fraction of its
+  level's range out. -/
+  morph  : Float := 0.7
+  /-- How far above and below 0 the floor may reach, for culling. -/
+  relief : Float := 2
   deriving Repr, Inhabited
 
-/-- Cells a side of a level at `detail`: scaled, a multiple of 4, at
-least 8. The finest spacing stays; the finest region grows. -/
+/-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
+stays the width it is; its cells get finer. -/
 def Floor.cellsAt (f : Floor) (detail : Float) : Nat :=
-  max 8 ((f.cells.toFloat * detail / 4).round.toUInt64.toNat * 4)
+  max 4 ((f.cells.toFloat * detail / 2).round.toUInt64.toNat * 2)
 
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where

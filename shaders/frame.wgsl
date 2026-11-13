@@ -5,7 +5,7 @@ struct Frame {
   viewProj : mat4x4f,
   camera   : vec4f,  // where the camera is; w unused
   grid     : vec4f,  // spacing, major, extent, fade
-  floor    : vec4f,  // the finest spacing, cells a side, levels, unused
+  floor    : vec4f,  // a patch's cells a side, the leaves' range, the morph fraction, unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;

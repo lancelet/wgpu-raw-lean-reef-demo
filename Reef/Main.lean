@@ -64,6 +64,14 @@ def configure (window : Window) (surface : Surface) (device : Device)
   }
   return (width, height)
 
+/-- The camera the options put, or where the demo does. -/
+def Options.camera' (o : Options) : Camera :=
+  match o.camera with
+  | some (x, y, z, yaw, pitch) =>
+    { Camera.initial with position := ⟨x, y, z⟩, yaw := yaw * 0.0174533,
+                          pitch := pitch * 0.0174533 }
+  | none => Camera.initial
+
 /-- Fill the screen, or leave it; if the window cannot, say why. -/
 def toggleFullscreen (window : Window) : IO Unit := do
   try window.setFullscreen !(← window.isFullscreen)
@@ -100,14 +108,17 @@ surface's kind (sRGB), the file's bytes as shown.
 def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     (app : App) (path : String) : IO Unit := do
   let (width, height) := (app.width, app.height)
-  -- The overlay too, with the camera's line: how the text looks.
-  renderer.overlay.show (describe app) (textSize height)
   let texture ← device.createTexture {
     label  := "screenshot"
     usage  := .renderAttachment ||| .copySrc
     size   := { width, height }
     format := screenshotFormat
   }
+  -- Twice: the overlay too, with the camera's line and the patches the
+  -- first frame drew, how the text looks.
+  renderer.draw app texture
+  renderer.overlay.show s!"{describe app}  patches {← renderer.drawn.get}"
+    (textSize height)
   renderer.draw app texture
   -- A row of the copy, a multiple of 256 bytes.
   let row := (width.toNat * 4 + 255) / 256 * 256
@@ -140,7 +151,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let window ← options.window 960 540
   if let some path := options.screenshot then
     let (width, height) ← window.size
-    let app : App := { width, height }
+    let app : App := { width, height, camera := options.camera' }
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
     screenshot wgpu device renderer app path
     return
@@ -152,7 +163,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let viewFormat := srgbOf format
   let (width, height) ←
     configure window surface device format viewFormat alpha
-  let initial : App := { width, height }
+  let initial : App := { width, height, camera := options.camera' }
   let renderer ← Renderer.create device viewFormat initial.floorMesh
   let app ← IO.mkRef initial
   let reconfigure := do
@@ -202,7 +213,8 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     stats.set next
     if let some text := text then summary.set text
     let shown ← app.get
-    renderer.overlay.show s!"{← summary.get}\n{describe shown}"
+    renderer.overlay.show
+      s!"{← summary.get}\n{describe shown}  patches {← renderer.drawn.get}"
       (textSize shown.height)
     let n ← drawn.get
     if options.frames == some n then
@@ -212,7 +224,8 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
 end Reef
 
 open Reef in
-/-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]`. -/
+/-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
+[--camera X,Y,Z,YAW,PITCH]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

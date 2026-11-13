@@ -138,14 +138,16 @@ def within (eye : Vec3) (x z size r : Float) (relief : Float) : Bool :=
 The nodes to draw, from `eye` inside `frustum` (which is relative to the
 eye, as what is drawn is): the quadtree's, from the root, each at its own
 level where it lies beyond its level's range, else its children; none
-outside the view. The root is wherever the eye is, snapped to half its
-width: so every node's lattice is the same wherever the root goes, the
-floor has no edge, and the eye is never nearer one than half the root.
+outside the view. The root is around the eye, its corner snapped to a
+quarter of its width below the eye less half of it: so the eye is never
+nearer an edge than a quarter of the root, and every node's lattice but
+the root's and its children's (never drawn whole: their ranges are beyond
+the fog) is the same wherever the root goes. The floor has no edge.
 -/
 def Quadtree.select (q : Quadtree) (eye : Vec3) (frustum : Frustum) :
     Array Node := Id.run do
   let root := q.leaf * (2 : Float) ^ q.depth.toFloat
-  let snap (x : Float) : Float := (x / (root / 2)).floor * (root / 2) - root / 2
+  let snap (x : Float) : Float := ((x - root / 2) / (root / 4)).floor * (root / 4)
   let mut out := #[]
   -- Nodes to try: where, how big, which level.
   let mut stack : Array Node := #[⟨snap eye.x, snap eye.z, root, q.depth⟩]

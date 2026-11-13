@@ -76,10 +76,14 @@ def Options.camera' (o : Options) : Camera :=
 def Options.initial (o : Options) (width height : UInt32) : App :=
   let overlays : Overlays := {}
   let floor : Floor := {}
+  let ripples : Ripples := {}
   { width, height, camera := o.camera'
     overlays := { wireframe := o.wireframe.getD overlays.wireframe
                   grid      := o.grid.getD overlays.grid }
-    floor    := { floor with amplitude := o.relief.getD floor.amplitude } }
+    floor    := { floor with amplitude := o.relief.getD floor.amplitude }
+    ripples  := { ripples with
+                  amplitude := o.ripples.getD ripples.amplitude
+                  direction := (o.waves.map (· * 0.0174533)).getD ripples.direction } }
 
 /-- Fill the screen, or leave it; if the window cannot, say why. -/
 def toggleFullscreen (window : Window) : IO Unit := do
@@ -162,6 +166,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
+      app.ripples
     screenshot wgpu device renderer app path
     return
   let surface ← window.createSurface wgpu
@@ -174,6 +179,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
+    initial.ripples
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
@@ -235,7 +241,7 @@ end Reef
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
-[--relief FACTOR]`. -/
+[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

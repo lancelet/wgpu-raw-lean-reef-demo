@@ -31,12 +31,16 @@ structure Options where
   grid       : Option Bool := none
   /-- The floor's relief, as a factor of its design, if said. -/
   relief     : Option Float := none
+  /-- The ripples' height, as a factor of their design, if said. -/
+  ripples    : Option Float := none
+  /-- Which way the waves run, in degrees from the x axis, if said. -/
+  waves      : Option Float := none
 
 /-- How to run the demo. -/
 def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
     [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
-    [--relief FACTOR]"
+    [--relief FACTOR] [--ripples FACTOR] [--waves DEGREES]"
 
 /-- `s` as a switch, if it is one. -/
 def parseSwitch (s : String) : Option Bool :=
@@ -78,6 +82,12 @@ def Options.parse : List String → Except String Options
   | "--relief" :: factor :: rest => do
     let some factor := parseFloat factor | throw s!"not a factor: {factor}"
     return { ← Options.parse rest with relief := some factor }
+  | "--ripples" :: factor :: rest => do
+    let some factor := parseFloat factor | throw s!"not a factor: {factor}"
+    return { ← Options.parse rest with ripples := some factor }
+  | "--waves" :: degrees :: rest => do
+    let some degrees := parseFloat degrees | throw s!"not degrees: {degrees}"
+    return { ← Options.parse rest with waves := some degrees }
   | arg :: _ => throw s!"unknown option: {arg}\n{usage}"
 
 /--

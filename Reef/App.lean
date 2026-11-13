@@ -86,6 +86,51 @@ stays the width it is; its cells get finer. -/
 def Floor.cellsAt (f : Floor) (detail : Float) : Nat :=
   max 4 ((f.cells.toFloat * detail / 2).round.toUInt64.toNat * 2)
 
+/--
+The sand's wave ripples, as `shaders/sand.wgsl` draws them from the tile
+`Reef/Ripples.lean` bakes (`shaders/ripples.wgsl`). The spacing and the
+steepness are those of orbital ripples a few metres down (Wiberg and
+Harris, 1994): the wavelength about 0.6 of the waves' orbital diameter at
+the bed, the height about a seventh of the wavelength.
+-/
+structure Ripples where
+  /-- Which way the waves run, in radians from the x axis; the crests lie
+  across it. -/
+  direction  : Float := 0.5
+  /-- Crest to crest, in metres. -/
+  wavelength : Float := 0.18
+  /-- Trough to crest, as a fraction of the wavelength. -/
+  steepness  : Float := 0.14
+  /-- A factor on the height: 1 as designed, 0 none. -/
+  amplitude  : Float := 1
+  /-- How far the ripples' direction strays from the waves', in radians,
+  here and there: more, and they bend and fork more. -/
+  spread     : Float := 0.3
+  /-- How far out of step the ripples' kernels are, 0 not at all, 1
+  wholly: a little breaks the crests up. -/
+  disorder   : Float := 0
+  /-- The crests' sharpness: a power, under 1 sharp. -/
+  sharpness  : Float := 0.6
+  /-- The tile's texels a side: a power of two. -/
+  texels     : Nat   := 2048
+  /-- Ripples across the tile: even. -/
+  perTile    : Nat   := 32
+  /-- Within this distance of the eye, in metres, the ripples lift the
+  mesh itself; beyond the next, the normal map alone carries them. -/
+  fadeFrom   : Float := 4
+  fadeTo     : Float := 8
+  /-- How much the troughs darken, for the sky they cannot see: 0 not at
+  all, 1 as the tile says. -/
+  cavity     : Float := 0.5
+  deriving Repr, Inhabited
+
+/-- The tile's width, in metres. -/
+def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
+
+/-- Trough to crest, in metres. -/
+def Ripples.height (r : Ripples) : Float :=
+  r.steepness * r.wavelength * r.amplitude
+
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
   /-- Every mesh's edges, as lines over it. -/
@@ -108,6 +153,7 @@ structure App where
   held     : Held          := {}
   grid     : Grid          := {}
   floor    : Floor         := {}
+  ripples  : Ripples       := {}
   detail   : Float         := 1
   overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button

@@ -72,6 +72,15 @@ def Options.camera' (o : Options) : Camera :=
                           pitch := pitch * 0.0174533 }
   | none => Camera.initial
 
+/-- The state at the start, `width` by `height`, as `options` say. -/
+def Options.initial (o : Options) (width height : UInt32) : App :=
+  let overlays : Overlays := {}
+  let floor : Floor := {}
+  { width, height, camera := o.camera'
+    overlays := { wireframe := o.wireframe.getD overlays.wireframe
+                  grid      := o.grid.getD overlays.grid }
+    floor    := { floor with amplitude := o.relief.getD floor.amplitude } }
+
 /-- Fill the screen, or leave it; if the window cannot, say why. -/
 def toggleFullscreen (window : Window) : IO Unit := do
   try window.setFullscreen !(← window.isFullscreen)
@@ -151,7 +160,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let window ← options.window 960 540
   if let some path := options.screenshot then
     let (width, height) ← window.size
-    let app : App := { width, height, camera := options.camera' }
+    let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
     screenshot wgpu device renderer app path
     return
@@ -163,7 +172,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
   let viewFormat := srgbOf format
   let (width, height) ←
     configure window surface device format viewFormat alpha
-  let initial : App := { width, height, camera := options.camera' }
+  let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
   let app ← IO.mkRef initial
   let reconfigure := do
@@ -225,7 +234,8 @@ end Reef
 
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
-[--camera X,Y,Z,YAW,PITCH]`. -/
+[--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
+[--relief FACTOR]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

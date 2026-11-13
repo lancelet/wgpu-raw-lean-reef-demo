@@ -76,7 +76,8 @@ structure FloorMesh where
   triangleCount : UInt32
   wire          : Buffer
   wireCount     : UInt32
-  /-- The nodes' records: `origin.x`, `origin.z`, size, level, each. -/
+  /-- The nodes' records: the corner and the size in leaf cells, from the
+  eye's cell, and the level, each (`Node.bytes`). -/
   nodes         : Buffer
 
 /-- As many nodes as the buffer holds. -/
@@ -107,10 +108,18 @@ structure Node where
   level : Nat
   deriving Repr, Inhabited
 
-/-- `nodes` as the shader reads them, relative to `eye`: four floats each. -/
-def Node.bytes (nodes : Array Node) (eye : Vec3) : ByteArray :=
+/--
+`nodes` as the shader reads them: four floats each, the corner and the size
+in whole leaf cells of `cell` metres, the corner's from the cell the eye
+is in. Whole numbers, so that a vertex two nodes share is the same number
+in both, and the floor has no crack where its floats would differ.
+-/
+def Node.bytes (nodes : Array Node) (eye : Vec3) (cell : Float) : ByteArray :=
+  let eyeCell (x : Float) := (x / cell).floor
   nodes.foldl
-    (fun b n => [n.x - eye.x, n.z - eye.z, n.size, n.level.toFloat].foldl pushF32 b)
+    (fun b n => [(n.x / cell).round - eyeCell eye.x,
+                 (n.z / cell).round - eyeCell eye.z,
+                 (n.size / cell).round, n.level.toFloat].foldl pushF32 b)
     ByteArray.empty
 
 /-- How the quadtree is chosen: the leaves' size and range, how many levels

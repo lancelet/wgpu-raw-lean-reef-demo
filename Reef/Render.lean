@@ -76,14 +76,18 @@ def far : Float := 2000
 
 /--
 The frame's uniforms, as WGSL lays out its `Frame`: the view and projection
-as one matrix, where the camera is, the grid, and the floor (a patch's
-cells, the leaves' range, the morph fraction): 112 bytes.
+as one matrix, where the camera is, the grid, the floor (a patch's cells,
+the leaves' range, the morph fraction, the height's amplitude), and the
+eye's place in its leaf cell, with the cell's size: 128 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Vec3) (grid : Grid)
     (floor : Floor) (cells : Nat) : ByteArray :=
+  let cell := floor.leaf / cells.toFloat
+  let within (x : Float) := x - (x / cell).floor * cell
   (viewProj.m.toList ++ [camera.x, camera.y, camera.z, 0]
     ++ [grid.spacing, grid.major, grid.extent, grid.fade]
-    ++ [cells.toFloat, floor.range, floor.morph, 0]).foldl
+    ++ [cells.toFloat, floor.range, floor.morph, floor.amplitude]
+    ++ [within camera.x, within camera.z, cell, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -237,7 +241,8 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     (frameBytes viewProj eye app.grid app.floor floor.cells)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
-  r.queue.writeBuffer floor.nodes 0 (Node.bytes nodes eye)
+  r.queue.writeBuffer floor.nodes 0
+    (Node.bytes nodes eye (app.floor.leaf / floor.cells.toFloat))
   r.drawn.set nodes.size
   let count := nodes.size.toUInt32
   let view ← texture.createView (some { format := r.format })

@@ -60,21 +60,26 @@ def Detail := Float
 /-- The floor's quadtree (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
 structure Floor where
   /-- A leaf patch's width, in metres. -/
-  leaf   : Float := 0.4
+  leaf      : Float := 0.4
   /-- Cells a side of a patch at detail 1: even. -/
-  cells  : Nat   := 32
+  cells     : Nat   := 32
   /-- Levels above the leaves: the root is `leaf * 2 ^ depth` wide, around
   the eye. -/
-  depth  : Nat   := 12
+  depth     : Nat   := 12
   /-- How far from the eye the leaves are drawn, in metres: each level up,
   twice as far. -/
-  range  : Float := 1.5
+  range     : Float := 3
   /-- Where a node begins to morph onto its parent: this fraction of its
   level's range out. -/
-  morph  : Float := 0.7
-  /-- How far above and below 0 the floor may reach, for culling. -/
-  relief : Float := 2
+  morph     : Float := 0.7
+  /-- The large-scale elevation's amplitude, as a factor of the height
+  function's (`shaders/frame.wgsl`): 1 as designed. -/
+  amplitude : Float := 1
   deriving Repr, Inhabited
+
+/-- How far above and below 0 the floor may reach, for culling: the
+height's octaves' amplitudes summed, and some. -/
+def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude
 
 /-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
 stays the width it is; its cells get finer. -/

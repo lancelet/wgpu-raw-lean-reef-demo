@@ -1,29 +1,35 @@
-// The wireframe: a fragment entry for every material's shader, which the
-// program puts before the material's own, drawn as lines over its triangles
-// with the material's vertex shader, so the lines are where the triangles
-// are. The lines are a pixel wide, as WebGPU draws them, and fade with
-// distance, faster than the scene does (far off, many lines cross a pixel,
-// and would pile up opaque): the distance from the fragment's position
-// (its w is the reciprocal of the depth it was projected at).
-//
-// WebGPU allows lines no depth bias, so a material's vertex shader places
-// the wireframe's vertices itself, through `place`: a little nearer the
-// camera along the line of sight, which leaves them where they are on the
-// screen and in front of the triangles in depth. `wireframe` is set true
-// on the wireframe's pipeline alone, as a constant.
+// The wireframe: for every material's shader, which the program puts this
+// before, a fragment entry drawing the mesh's edges over its triangles.
+// The triangles are drawn again, with no indices, every corner its own
+// vertex, so that the vertex shader can give each corner its barycentric
+// coordinate (`barycentric`, from the vertex's index, at location 7, which
+// every material's vertex output carries): across a triangle they
+// interpolate to the distances from its edges, and `fwidth` says how far
+// a pixel is, so the edges are lines a pixel and a half wide, anti-aliased,
+// whatever the distance, as the grid's are. Being the same triangles, they
+// are at the same depth as the material's, and pass a test of less or
+// equal. They fade as the triangles shrink on the screen (far off, or
+// fine), gone below a few pixels, where they would pile up opaque: the
+// derivatives say how many pixels a triangle spans.
 
-override wireframe : bool = false;
-
-// `world`, where the vertex goes: nearer the camera by a fraction of its
-// distance, for the wireframe.
-fn place(world : vec3f) -> vec3f {
-  if (wireframe) {
-    return frame.camera.xyz + (world - frame.camera.xyz) * 0.998;
-  }
-  return world;
+// Corner `index % 3`'s barycentric coordinate.
+fn barycentric(index : u32) -> vec3f {
+  let corner = index % 3u;
+  return vec3f(f32(corner == 0u), f32(corner == 1u), f32(corner == 2u));
 }
 
-@fragment fn fs_wire(@builtin(position) position : vec4f) -> @location(0) vec4f {
-  let depth = 1.0 / position.w;
-  return vec4f(0.05, 0.1, 0.45, visible(4.0 * depth));
+@fragment fn fs_wire(@location(7) bary : vec3f) -> @location(0) vec4f {
+  let width = max(fwidth(bary), vec3f(1e-6));
+  // The distance to the nearest edge, in pixels: a line a pixel wide.
+  let d = bary / width;
+  let edge = min(min(d.x, d.y), d.z);
+  let line = 1.0 - smoothstep(0.3, 1.0, edge);
+  // The triangle's size on the screen, in pixels, about: the lines go as
+  // it falls below six, gone at two.
+  let size = 1.0 / length(width);
+  let alpha = line * smoothstep(2.0, 6.0, size);
+  if (alpha < 0.004) {
+    discard;
+  }
+  return vec4f(0.05, 0.1, 0.45, alpha);
 }

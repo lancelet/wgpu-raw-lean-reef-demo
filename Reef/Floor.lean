@@ -17,8 +17,10 @@ cells a side where the level inside sits. That level is snapped to a finer
 lattice, so the hole is offset by 0 or 1 cell in each axis: four index
 buffers, one for each offset, chosen each frame.
 
-For the wireframe, each index buffer has a companion of its edges, drawn as
-lines with the same vertex shader (`Reef/Render.lean`).
+For the wireframe, each index buffer has a companion: its triangles with
+no indices, every corner its own vertex, so that each can say which corner
+it is (`shaders/wire.wgsl`), drawn with the same vertex shader
+(`Reef/Render.lean`).
 -/
 
 open WebGPU.Raw
@@ -30,13 +32,21 @@ def pushU32 (bytes : ByteArray) (x : UInt32) : ByteArray :=
   bytes |>.push x.toUInt8 |>.push (x >>> 8).toUInt8
     |>.push (x >>> 16).toUInt8 |>.push (x >>> 24).toUInt8
 
-/-- The indices of a triangle list, and of its edges, each once, as lines. -/
+/-- The indices of a triangle list. -/
 structure Indices where
   triangles : Array UInt32
-  edges     : Array UInt32
 
 /-- `is` as little-endian bytes. -/
 def Indices.bytes (is : Array UInt32) : ByteArray := is.foldl pushU32 ByteArray.empty
+
+/-- The triangles' vertices with no indices, each corner its own, from the
+vertices `vertices`, `stride` bytes each. -/
+def Indices.expanded (is : Array UInt32) (vertices : ByteArray) (stride : Nat) :
+    ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (is.size * stride)
+  for i in is do
+    out := out ++ vertices.extract (i.toNat * stride) ((i.toNat + 1) * stride)
+  return out
 
 /--
 The lattice's vertices, `n + 1` a side, as pairs of floats: the lattice
@@ -49,24 +59,6 @@ def latticeVertices (n : Nat) : ByteArray := Id.run do
     for i in [0:n + 1] do
       out := pushF32 (pushF32 out (i.toFloat - n.toFloat / 2))
         (j.toFloat - n.toFloat / 2)
-  return out
-
-/-- The edges of `triangles`, each once, as a line list. -/
-def edgesOf (triangles : Array UInt32) : Array UInt32 := Id.run do
-  let mut edges : Array (UInt32 × UInt32) := #[]
-  for t in [0:triangles.size / 3] do
-    let a := triangles[3 * t]!
-    let b := triangles[3 * t + 1]!
-    let c := triangles[3 * t + 2]!
-    for (p, q) in [(a, b), (b, c), (c, a)] do
-      edges := edges.push (min p q, max p q)
-  let sorted := edges.qsort fun (p, q) (p', q') => p < p' || (p == p' && q < q')
-  let mut out := #[]
-  let mut last : Option (UInt32 × UInt32) := none
-  for e in sorted do
-    unless last == some e do
-      out := out.push e.1 |>.push e.2
-    last := some e
   return out
 
 /--
@@ -89,25 +81,26 @@ def latticeIndices (n : Nat) (hole : Option (Nat × Nat)) : Indices := Id.run do
           |>.push (vertex i j) |>.push (vertex (i + 1) j) |>.push (vertex i (j + 1))
           |>.push (vertex (i + 1) j) |>.push (vertex (i + 1) (j + 1))
           |>.push (vertex i (j + 1))
-  return { triangles, edges := edgesOf triangles }
+  return { triangles }
 
-/-- One level's index buffers on the GPU: the triangles, and their edges. -/
+/-- One level's buffers on the GPU: its triangles' indices, and the same
+triangles with no indices, for the wireframe. -/
 structure LevelMesh where
   triangles     : Buffer
   triangleCount : UInt32
-  edges         : Buffer
-  edgeCount     : UInt32
+  wire          : Buffer
+  wireCount     : UInt32
 
-/-- `indices` as buffers on `device`. -/
-def LevelMesh.create (device : Device) (label : String) (indices : Indices) :
-    IO LevelMesh := do
+/-- `indices` as buffers on `device`, the wireframe's from `vertices`. -/
+def LevelMesh.create (device : Device) (label : String) (indices : Indices)
+    (vertices : ByteArray) : IO LevelMesh := do
   return {
     triangles     := ← createBuffer device s!"{label} triangles" .index
       (Indices.bytes indices.triangles)
     triangleCount := indices.triangles.size.toUInt32
-    edges         := ← createBuffer device s!"{label} edges" .index
-      (Indices.bytes indices.edges)
-    edgeCount     := indices.edges.size.toUInt32
+    wire          := ← createBuffer device s!"{label} wire" .vertex
+      (Indices.expanded indices.triangles vertices 8)
+    wireCount     := indices.triangles.size.toUInt32
   }
 
 /-- The floor's mesh: the lattice, and the index buffers each level uses. -/
@@ -122,15 +115,16 @@ structure FloorMesh where
 
 /-- The floor's mesh, `n` cells a side a level (`n` a multiple of 4). -/
 def FloorMesh.create (device : Device) (n : Nat) : IO FloorMesh := do
+  let lattice := latticeVertices n
   let mut rings := #[]
   for dy in [0:2] do
     for dx in [0:2] do
       rings := rings.push (← LevelMesh.create device s!"ring {dx} {dy}"
-        (latticeIndices n (some (dx, dy))))
+        (latticeIndices n (some (dx, dy))) lattice)
   return {
     n, rings
-    vertices := ← createBuffer device "lattice" .vertex (latticeVertices n)
-    full     := ← LevelMesh.create device "full" (latticeIndices n none)
+    vertices := ← createBuffer device "lattice" .vertex lattice
+    full     := ← LevelMesh.create device "full" (latticeIndices n none) lattice
   }
 
 /--

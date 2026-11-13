@@ -15,13 +15,13 @@ shown, its wireframe (`shaders/wire.wgsl`), and the grid
 
 Every material's shader gets the frame's uniforms (`Shaders.frame`) and
 the wireframe's fragment entry (`Shaders.wire`) put before its own, and a
-second pipeline: the material's vertex shader,
-that entry, and the mesh's edges as lines, drawn after the triangles with a
-depth test that lets the edges through where they lie on them (their
-vertices are the triangles', so their depths are; WebGPU allows lines no
-depth bias). So the
-lines are the triangles', whatever the vertex shader does to them, and any
-mesh with an edge buffer gets a wireframe with no shader of its own.
+second pipeline: the material's vertex shader, that entry, and the mesh's
+triangles again with no indices, each corner its own vertex, drawn after
+the triangles with a depth test that lets them through where they
+coincide. The entry draws each triangle's edges, anti-aliased, from the
+corner's barycentric coordinate the vertex shader gives it. So the lines
+are the triangles', whatever the vertex shader does to them, and any mesh
+with its triangles so expanded gets a wireframe with no shader of its own.
 -/
 
 open WebGPU.Raw
@@ -101,14 +101,12 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
     (format : TextureFormat) (buffers : Array VertexBufferLayout := #[])
     (fragment : String := "fs") (topology : PrimitiveTopology := .triangleList)
     (depthCompare : CompareFunction := .less) (depthWrite : Bool := true)
-    (blend : Option BlendState := none)
-    (constants : Array ConstantEntry := #[]) :
+    (blend : Option BlendState := none) :
     IO RenderPipeline :=
   device.createRenderPipeline {
     label     := label
     layout    := some layout
-    vertex    := { module := module, entryPoint := some "vs", buffers,
-                   constants }
+    vertex    := { module := module, entryPoint := some "vs", buffers }
     fragment  := some {
       module     := module
       entryPoint := some fragment
@@ -142,9 +140,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
   let sandWire ← pipeline device "sand wire" layout sandModule format
-    #[latticeLayout] (fragment := "fs_wire") (topology := .lineList)
+    #[latticeLayout] (fragment := "fs_wire")
     (depthCompare := .lessEqual) (depthWrite := false) (blend := some overBlend)
-    (constants := #[{ key := "wireframe", value := 1 }])
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
@@ -181,21 +178,26 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
   r.depth.set (some d)
   return d
 
-/-- Draw the floor's levels with `mesh`'s index buffers: `pick` says which
-of a level's. -/
+/-- Draw the floor's levels: indexed, or, for the wireframe (`wire`), the
+same triangles with no indices. -/
 def Renderer.drawFloor (r : Renderer) (pass : RenderPassEncoder) (app : App)
-    (pick : LevelMesh → Buffer × UInt32) : IO Unit := do
+    (wire : Bool) : IO Unit := do
   let floor ← r.floor.get
-  pass.setVertexBuffer 0 (some floor.vertices) 0
-    ((floor.n + 1) * (floor.n + 1) * 8).toUInt64
+  unless wire do
+    pass.setVertexBuffer 0 (some floor.vertices) 0
+      ((floor.n + 1) * (floor.n + 1) * 8).toUInt64
   for level in [0:app.floor.levels] do
     let mesh := if level == 0 then floor.full else
       let (dx, dy) := holeOffset app.floor.spacing level
         app.camera.position.x app.camera.position.z
       (floor.rings[dy * 2 + dx]?).getD floor.full
-    let (buffer, count) := pick mesh
-    pass.setIndexBuffer buffer .uint32 0 (count.toUInt64 * 4)
-    pass.drawIndexed count 1 0 0 level.toUInt32
+    if wire then
+      pass.setVertexBuffer 0 (some mesh.wire) 0 (mesh.wireCount.toUInt64 * 8)
+      pass.draw mesh.wireCount 1 0 level.toUInt32
+    else
+      pass.setIndexBuffer mesh.triangles .uint32 0
+        (mesh.triangleCount.toUInt64 * 4)
+      pass.drawIndexed mesh.triangleCount 1 0 0 level.toUInt32
 
 /--
 Draw `app`'s scene into `texture`, `app.width` by `app.height`, through a
@@ -226,10 +228,10 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   }
   pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.sand
-  r.drawFloor pass app fun m => (m.triangles, m.triangleCount)
+  r.drawFloor pass app (wire := false)
   if app.overlays.wireframe then
     pass.setPipeline r.sandWire
-    r.drawFloor pass app fun m => (m.edges, m.edgeCount)
+    r.drawFloor pass app (wire := true)
   if app.overlays.grid then
     pass.setPipeline r.grid
     pass.draw 6 1 0 0

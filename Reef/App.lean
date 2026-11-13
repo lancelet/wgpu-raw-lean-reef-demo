@@ -68,7 +68,7 @@ structure Floor where
   depth     : Nat   := 12
   /-- How far from the eye the leaves are drawn, in metres: each level up,
   twice as far. -/
-  range     : Float := 3
+  range     : Float := 1.5
   /-- Where a node begins to morph onto its parent: this fraction of its
   level's range out. -/
   morph     : Float := 0.7

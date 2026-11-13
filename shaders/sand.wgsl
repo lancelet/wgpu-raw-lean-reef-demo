@@ -40,9 +40,10 @@ fn morph(dist : f32, level : f32) -> f32 {
 // so that the node meets a neighbour at the level above with no crack,
 // and leaves for the level above with no pop. The morph begins at the
 // range's `morph` fraction of the way out, by the vertex's own distance
-// from the eye. The two levels above are morphed too, as a neighbour at
-// those levels would morph the same vertex, so that the two agree
-// wherever they meet, whatever the distances.
+// from the eye. The three levels above are morphed too, as a neighbour
+// at those levels would morph the same vertex, so that the two agree
+// wherever they meet, whatever the distances (three, for relief many
+// times the design's, which carries a node's vertices far).
 @vertex fn vs(@location(0) lattice : vec2f,
               @builtin(vertex_index) index : u32,
               @builtin(instance_index) instance : u32) -> Out {
@@ -50,9 +51,11 @@ fn morph(dist : f32, level : f32) -> f32 {
   let cells = frame.floor.x;
   // Leaf cells a lattice step: a power of two, exact.
   let step = node.z / cells;
-  let dist = length(floorAt(node.xy + lattice * step));
   var morphed = lattice;
-  for (var k = 0u; k < 3u; k++) {
+  for (var k = 0u; k < 4u; k++) {
+    // The distance from where the vertex is after the levels below: a
+    // vertex moved onto another must go on as that one does.
+    let dist = length(floorAt(node.xy + morphed * step));
     let s = exp2(f32(k + 1u));
     morphed = morphed - fract(morphed / s) * s * morph(dist, node.w + f32(k));
   }

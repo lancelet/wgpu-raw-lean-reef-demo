@@ -152,7 +152,7 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     throw (IO.userError "the screenshot was not read back")
   IO.FS.writeBinFile path
     (ppm width.toNat height.toNat row (← buffer.readMapped 0 size))
-  IO.println s!"Wrote {path}: {width}x{height}."
+  IO.println s!"Wrote {path}: {width}x{height}, {← renderer.drawn.get} patches."
 
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)

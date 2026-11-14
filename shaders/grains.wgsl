@@ -160,13 +160,12 @@ fn tracesAt(p : vec2f) -> vec2f {
   var shade = 1.0;
   // In patches: here many, there none, a field of noise over the tile
   // saying which, three features across it; each kind its own.
-  // Patches of a few centimetres, and most of the tile with none at
-  // all: where the noise is above a threshold only, and more the
-  // higher it is.
+  // Varying over the tile a little; where the traces are at all is the
+  // sand's to say (shaders/sand.wgsl), in colonies of a few ripples.
   let uv = p / texels * 3.0;
-  let holesHere = smoothstep(0.1, 0.5, noise(uv + 2.0, 3));
-  let castsHere = smoothstep(0.15, 0.55, noise(uv + 23.0, 3));
-  let scrapesHere = smoothstep(0.1, 0.5, noise(uv + 41.0, 3));
+  let holesHere = smoothstep(-0.3, 0.3, noise(uv + 2.0, 3));
+  let castsHere = smoothstep(-0.2, 0.4, noise(uv + 23.0, 3));
+  let scrapesHere = smoothstep(-0.3, 0.3, noise(uv + 41.0, 3));
   // Holes, in cells of forty grains, one to a third of them.
   let holeCells = i32(round(texels / (grain * 40.0)));
   let holeCell = texels / f32(holeCells);

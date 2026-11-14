@@ -28,8 +28,7 @@ struct Bake {
   // The tile's width, in metres; the surface's height above the floor;
   // the grid drawn, quads a side; its margin beyond the tile, in metres;
   // how far the water's index for red and for blue lie either side of
-  // green's (0.004 in truth, which at the floor's depth would fringe
-  // every line wider than the line).
+  // green's (0.006 in truth).
   tile       : f32,
   depth      : f32,
   grid       : u32,

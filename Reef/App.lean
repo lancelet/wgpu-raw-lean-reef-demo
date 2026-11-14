@@ -269,7 +269,7 @@ structure Water where
   scattered toward the camera by what the water holds, in shafts under
   the surface's bright filaments: its strength, 0 none; the steps a pixel
   marches its ray; and how far, in metres. -/
-  shafts        : Float := 0.6
+  shafts        : Float := 0.85
   shaftSteps    : Nat   := 12
   shaftReach    : Float := 30
   /-- The marine snow (`Reef/Snow.lean`): how many flecks, and the

@@ -138,95 +138,10 @@ fn morph(dist : f32, level : f32) -> f32 {
   return out;
 }
 
-// The grains' tile is small, and would show its repeating a few tile
-// widths off; so it is read through a grid of triangles, each corner of
-// which reads the tile from a place of its own, and the three readings
-// blended by how near the corners are (Heitz and Neyret, "High-
-// Performance By-Example Noise using a Histogram-Preserving Blending
-// Operator", 2018): no two triangles show the same part of the tile,
-// and no seam between them. The triangles are smaller than the tile, so
-// that it never repeats even within one (a grid of a few tiles across
-// let it, and the repeat showed at a metre). A blend of three is flatter
-// than any one, so what varies is scaled back up by the weights' length:
-// the tilt, which varies about zero, and the brightness, which varies
-// about a half.
-const grainTriangles = 0.4;  // tile widths across one
+// (The grains' tile is read through a grid of triangles, `grainsAt`,
+// in shaders/frame.wgsl, which the rock's sand reads it through too.)
 
-// Where `uv`, in tile widths, falls in the grid of triangles: the
-// three corners, and how near each (the barycentric weights).
-fn triangleAt(uv : vec2f) -> mat3x3f {
-  let skewed = mat2x2f(1.0, 0.0, -0.57735027, 1.15470054) * (uv / grainTriangles);
-  let base = floor(skewed);
-  let f = fract(skewed);
-  if (f.x + f.y < 1.0) {
-    return mat3x3f(vec3f(base, 1.0 - f.x - f.y),
-                   vec3f(base + vec2f(1.0, 0.0), f.x),
-                   vec3f(base + vec2f(0.0, 1.0), f.y));
-  }
-  return mat3x3f(vec3f(base + vec2f(1.0, 1.0), f.x + f.y - 1.0),
-                 vec3f(base + vec2f(1.0, 0.0), 1.0 - f.y),
-                 vec3f(base + vec2f(0.0, 1.0), 1.0 - f.x));
-}
 
-// The place a corner `corner` of the grid reads the tile from: an
-// offset of its own, in tile widths.
-fn cornerOffset(corner : vec2f) -> vec2f {
-  let c = vec2i(corner);
-  var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ 0x3u;
-  h = h ^ (h >> 15u);
-  h = h * 0x2c1b3c6du;
-  h = h ^ (h >> 12u);
-  return vec2f(f32(h & 0xffffu), f32((h >> 16u) & 0xffffu)) / 65535.0;
-}
-
-// The grains' tile at `xz`, in the world, read through the grid of
-// triangles, for a pixel whose footprint is `along` and `across`, the
-// grains `coarser` times their size (the sand sorted: coarser in the
-// ripples' troughs, finer on their crests): the normal, not unit
-// (shorter where the filtering has averaged it), and the brightness. The
-// tilt and the brightness are scaled back up to the tile's contrast; the
-// normal's height is the plain blend, as its length is what is wanted
-// of it.
-fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32,
-            still : f32) -> vec4f {
-  let uv = xz / frame.grain.x;
-  let corners = triangleAt(uv);
-  var sum = vec4f(0.0);
-  var weights = 0.0;
-  for (var i = 0; i < 3; i++) {
-    let corner = corners[i];
-    // Scaled about the corner, not the world's origin: the scale varies
-    // over the ripples, and about the origin that would smear the tile.
-    let cornerUV = mat2x2f(1.0, 0.0, 0.5, 0.8660254) * corner.xy * grainTriangles;
-    let local = (uv - cornerUV) / coarser + cornerUV;
-    // The layer with the traces where the sand is still, the one without
-    // where it moves: both, blended, where it is between.
-    let at = local + cornerOffset(corner.xy);
-    let dx = along / (frame.grain.x * coarser);
-    let dy = across / (frame.grain.x * coarser);
-    let read = mix(textureSampleGrad(grains, rippleSampler, at, 1, dx, dy),
-                   textureSampleGrad(grains, rippleSampler, at, 0, dx, dy), still);
-    sum += corner.z * (read - 0.5);
-    weights += corner.z * corner.z;
-  }
-  let scaled = sum / sqrt(weights);
-  return vec4f(scaled.x * 2.0, sum.y * 2.0, scaled.z * 2.0, scaled.w + 0.5);
-}
-
-// Oren and Nayar's diffuse lighting of a rough surface, `sigma2` the
-// square of its roughness (the spread of its facets, in radians), with
-// normal `n`, lit from `l`, seen from `v`: like Lambert's, but a rough
-// surface shows the same from every angle when lit from behind the
-// viewer, and darkens toward the light, as sand does.
-fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
-  let nl = max(dot(n, l), 0.0);
-  let nv = max(dot(n, v), 0.0);
-  let a = 1.0 - 0.5 * sigma2 / (sigma2 + 0.33);
-  let b = 0.45 * sigma2 / (sigma2 + 0.09);
-  let s = dot(l, v) - nl * nv;
-  let t = select(1.0, max(nl, nv), s > 0.0);
-  return nl * (a + b * s / max(t, 1e-4));
-}
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
@@ -271,9 +186,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // And sorted by the rock: the moat at its foot, scoured, keeps only the
   // coarse, and bits of the rock itself; the tails in its lee are the
   // fine the slack water dropped.
-  let coarse = smoothstep(0.02, 0.12, -bed.z);
-  let fine = smoothstep(0.01, 0.05, bed.z);
-  let sorted = mix(1.35, 0.8, tile.r) * mix(1.0, 1.9, coarse) * mix(1.0, 0.8, fine);
+  let sorted = mix(1.35, 0.8, tile.r) * sandSorting(bed);
   // What lives in the sand digs where the sand is still: in the ripples'
   // troughs, not on their crests, which the water sweeps; and in
   // colonies, patches a few ripples across with bare sand between (a
@@ -318,10 +231,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // The moat's coarse sand greyer and darker, flecked with the rock's
   // own bits; the tails' fine sand paler.
   // (Its rubble, bits of the rock, is the scatter's to place.)
-  let tint = mix(mix(vec3f(1.0), vec3f(0.86, 0.84, 0.8), coarse), vec3f(1.1, 1.08, 1.05), fine);
-  var sand = vec3f(0.66, 0.5, 0.26) * tint
-    * mix(1.0, 2.0 * grain.a, frame.grain.z * (1.0 + 1.2 * coarse))
-    * mix(0.88, 1.0, tile.r);
+  let sand = sandColour(bed, grain.a, tile.r);
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point
   // meets the surface, so that they drift down the sun's slant).

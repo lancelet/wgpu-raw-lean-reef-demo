@@ -73,11 +73,13 @@ fn bakeSeabed(@builtin(global_invocation_id) id : vec3u) {
   let xz = frame.reef.xz + (vec2f(id.xy) + 0.5) / vec2f(size) * extent;
   let open = baseHeight(xz);
   let dir = frame.ripple.xy;
-  // The rock about: how near, at the sand; how sheltered, each way, a
-  // hand above it, and on the whole, the surge coming each way in turn.
+  // The rock about: how near, at the sand; how sheltered, a hand above
+  // it, from the surge coming either way (the more sheltered way: the
+  // sand there is left alone half of every wave, and the ripples cannot
+  // keep up their shape on the other half).
   let near = max(reefDistance(vec3f(xz.x, open + 0.1, xz.y), true), 0.0);
   let above = vec3f(xz.x, open + 0.3, xz.y);
-  let lee = 0.5 * (shelterFrom(above, dir) + shelterFrom(above, -dir));
+  let lee = max(shelterFrom(above, dir), shelterFrom(above, -dir));
   // Quickened about the rock, within a metre or so of it, where it is not
   // in the rock's lee.
   let quick = exp(-near / 0.7) * (1.0 - lee);
@@ -86,9 +88,19 @@ fn bakeSeabed(@builtin(global_invocation_id) id : vec3u) {
   // sand dropped in the lee, off the rock, a hand high.
   let moat = -0.32 * exp(-near / 0.75) * (0.6 + 0.4 * quick);
   let tail = 0.16 * lee * smoothstep(0.5, 1.6, near);
-  let bed = moat + tail;
-  let moves = clamp((1.0 - 0.85 * lee) * (1.0 + 0.5 * quick), 0.0, 1.5);
-  let shade = reefShade(vec3f(xz.x, open + bed, xz.y));
+  // The lip: right against the rock the sand rises a little into it,
+  // a fillet a few centimetres high and a hand wide, the sand banked
+  // where the rock meets it, so that the floor turns up into the rock
+  // rather than running into it.
+  let lip = 0.06 * exp(-near / 0.08);
+  let bed = moat + tail + lip;
+  let moves = clamp((1.0 - smoothstep(0.1, 0.7, lee)) * (1.0 + 0.5 * quick), 0.0, 1.5);
+  var shade = reefShade(vec3f(xz.x, open + bed, xz.y));
+  // And right against the rock, in the last hand-span, the sand sees
+  // little of the sky: the contact's own shade, which the broad occlusion
+  // is too soft to give.
+  let touching = max(reefDistance(vec3f(xz.x, open + bed + 0.05, xz.y), true), 0.0);
+  shade.x *= mix(0.4, 1.0, smoothstep(0.0, 0.18, touching));
   textureStore(seabedOut, id.xy, vec4f(shade, bed, moves));
   // The flow, for the ripples: its potential's gradient by differences
   // (the stream function's is the same turned a right angle, the map

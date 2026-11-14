@@ -1,9 +1,12 @@
 // The bommies, drawn (`Reef/Bommies.lean`): the mesh baked at the start
 // (shaders/reefbake.wgsl), its vertices read from a buffer. The material
 // is old reef limestone: grey, crusted pink with coralline algae on the
-// faces that see the light, furred olive-brown with algal turf, dusted
-// with sand where it is flat enough to hold it, darker in its hollows; a
-// fine roughness of pits and nodules over it all. Lit as the sand is: the
+// faces that see the light, furred olive-brown with algal turf, sand
+// settled in its low places, darker in its hollows; close up, the coral
+// it was, worn and bored and crusted (the detail tile,
+// shaders/rockdetail.wgsl, read from three sides). Where it meets the
+// sand, sand-blasted pale and bare a hand or two up, the sand banked into
+// its pits, and the sand shading its foot. Lit as the sand is: the
 // sky, as much as the rock lets in (the baked occlusion), and the sun
 // through the caustics, the clouds and the swell, where the rock does not
 // shade itself (the baked shadow); fogged by the water.
@@ -16,6 +19,12 @@ struct Vertex {
 }
 
 @group(1) @binding(0) var<storage, read> vertices : array<Vertex>;
+// The rock's detail tile, and its sampler (repeating, filtered).
+@group(1) @binding(1) var rockDetail : texture_2d_array<f32>;
+@group(1) @binding(2) var rockSampler : sampler;
+
+// The detail tile's width, in metres (`Reef.rockTileWidth`).
+const rockTile = 0.25;
 
 struct Out {
   @builtin(position) position : vec4f,
@@ -81,21 +90,59 @@ fn triplanarGrad(p : vec3f, scale : f32, w : vec3f) -> vec4f {
   return 2.2 * vec4f(sum.x, sum.yzw * scale);
 }
 
+// How much of the sky the rock leaves `p` on it, normal `n`: the field
+// sampled out along the normal, a hand to a metre (between its points,
+// so smooth; too far out to see the rock's small pits, which the detail
+// tile darkens itself). Per pixel, near: the vertices' own, baked at the
+// rock's every pit and interpolated, would draw the mesh's cells.
+fn rockOcclusion(p : vec3f, n : vec3f) -> f32 {
+  var occluded = 0.0;
+  var total = 0.0;
+  for (var k = 1; k <= 4; k++) {
+    let d = 0.12 * f32(k * k);
+    let weight = 1.0 / f32(k);
+    occluded += weight * clamp((d - reefDistance(p + n * d, true)) / d, 0.0, 1.0);
+    total += weight;
+  }
+  return clamp(1.0 - 1.1 * occluded / total, 0.0, 1.0);
+}
+
 // The sun's light at `p` on the rock, its normal `n`, marched through the
 // reef's field toward the sun (`reefDistance`): for where the shadow
 // baked at the vertices changes, which between vertices a hand apart
 // would draw its edge as their triangles'.
 fn rockShadow(p : vec3f, n : vec3f) -> f32 {
   let sun = frame.sun.xyz;
+  // (Started a cell out from the rock, along its normal: the field
+  // between its points is not quite the mesh, and nearer it would find
+  // the rock's own face and streak it with shadow.)
   var t = 0.06;
   var lit = 1.0;
   for (var s = 0; s < 24; s++) {
-    let h = reefDistance(p + n * 0.04 + sun * t, true);
+    let h = reefDistance(p + n * 0.1 + sun * t, true);
     lit = min(lit, 0.5 + 0.5 * h / (0.05 * t + 0.015));
     t += clamp(h * 0.8, 0.03 + 0.03 * t, 0.5);
     if (lit <= 0.0 || t > 8.0) { break; }
   }
   return smoothstep(0.0, 1.0, clamp(lit, 0.0, 1.0));
+}
+
+// The detail tile over the rock, read from its three planes as their
+// weights `w` say, `layer` of it, at `scale` tiles a tile's width, with
+// the pixel's footprint `fx`, `fy` (in tiles); each plane's own offset,
+// so that no two planes' features line up.
+struct Planes {
+  x : vec4f,
+  y : vec4f,
+  z : vec4f,
+}
+
+fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Planes {
+  var r : Planes;
+  if (w.x > 0.02) { r.x = textureSampleGrad(rockDetail, rockSampler, p.yz + vec2f(0.31, 0.17), layer, fx.yz, fy.yz); }
+  if (w.y > 0.02) { r.y = textureSampleGrad(rockDetail, rockSampler, p.xz + vec2f(0.63, 0.41), layer, fx.xz, fy.xz); }
+  if (w.z > 0.02) { r.z = textureSampleGrad(rockDetail, rockSampler, p.xy + vec2f(0.07, 0.83), layer, fx.xy, fy.xy); }
+  return r;
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
@@ -105,77 +152,132 @@ fn rockShadow(p : vec3f, n : vec3f) -> f32 {
   var n = geometric;
   var w = pow(abs(geometric), vec3f(4.0));
   w = w / (w.x + w.y + w.z);
-  // Five scales of noise over the rock, from a couple of metres to a
-  // couple of centimetres; the finest only near, where it shows.
+  // The detail tile's weights sharper: a plane seen slantwise stretches
+  // it into streaks, so each is read only where it is nearly square on.
+  // (By the smoothed normal: the mesh's own faces, seen from above,
+  // are near-rectangles, and weights by them would show each one.)
+  var wd = pow(max(abs(geometric) - 0.35, vec3f(0.0)), vec3f(6.0));
+  wd = wd / max(wd.x + wd.y + wd.z, 1e-6);
   let near = 1.0 - smoothstep(6.0, 22.0, dist);
+  // The sky the rock leaves it: per pixel near, the vertices' far off.
+  var ao = in.ao;
+  if (dist < 25.0) {
+    ao = mix(rockOcclusion(world, geometric), ao, smoothstep(18.0, 25.0, dist));
+  }
+  // Three scales of noise over the rock, a couple of metres to a few
+  // centimetres: where its covers lie, and the knobs of the coral heads.
   let large = triplanar(world * 0.55 + 3.0, w);
   let mid = triplanar(world * 1.7 + 11.0, w);
   let smallG = triplanarGrad(world * 6.0 + 21.0, 6.0, w);
-  var detailG = vec4f(0.0);
-  var gritG = vec4f(0.0);
-  var microG = vec4f(0.0);
-  if (dist < 22.0) { detailG = triplanarGrad(world * 19.0 + 5.0, 19.0, w); }
-  if (dist < 8.0) { gritG = triplanarGrad(world * 47.0 + 9.0, 47.0, w); }
-  if (dist < 2.0) { microG = triplanarGrad(world * 140.0 + 2.0, 140.0, w); }
-  // (Each octave faded out before the distance it stops being read at,
-  // its gradient with it, so that no edge shows where it stops.)
-  gritG = gritG * (1.0 - smoothstep(5.0, 8.0, dist));
-  microG = microG * (1.0 - smoothstep(1.0, 2.0, dist));
-  detailG = detailG * (1.0 - smoothstep(16.0, 22.0, dist));
   let small = smallG.x;
-  let detail = detailG.x;
-  let grit = gritG.x;
-  let micro = microG.x;
-  // The fine roughness: the knobs of old coral heads, the cups of dead
-  // polyps, grit, and, a hand away, the rock's own grain; a bump of their
-  // exact gradients, fading where it would shimmer.
   let knobs = 1.0 - abs(small);
-  let cupT = clamp((detail - 0.3) / 0.4, 0.0, 1.0);
-  let cups = cupT * cupT * (3.0 - 2.0 * cupT);
-  let relief = knobs * knobs * 0.5 + (1.0 - abs(detail)) * 0.25 + grit * 0.1 - cups * 0.3;
-  let slope = (0.07 * knobs * (-sign(small)) * smallG.yzw
-             - 0.008 * sign(detail) * detailG.yzw
-             - 0.004 * 6.0 * cupT * (1.0 - cupT) / 0.4 * detailG.yzw
-             + 0.002 * gritG.yzw + 0.0006 * microG.yzw) * near;
-  n = normalize(n - (slope - n * dot(n, slope)));
+  // The detail tile, from its three planes: the surface's slope, cavity
+  // and height; its brightness, crust and grit.
+  let tp = world / rockTile;
+  let fx = dpdx(tp);
+  let fy = dpdy(tp);
+  let s0 = detailPlanes(tp, fx, fy, wd, 0);
+  let s1 = detailPlanes(tp, fx, fy, wd, 1);
+  let sx = (s0.x.xy - 0.5) * 4.0;
+  let sy = (s0.y.xy - 0.5) * 4.0;
+  let sz = (s0.z.xy - 0.5) * 4.0;
+  let detailSlope = vec3f(0.0, sx.x, sx.y) * wd.x + vec3f(sy.x, 0.0, sy.y) * wd.y
+    + vec3f(sz.x, sz.y, 0.0) * wd.z;
+  let cavity = s0.x.z * wd.x + s0.y.z * wd.y + s0.z.z * wd.z;
+  let rise = s0.x.w * wd.x + s0.y.w * wd.y + s0.z.w * wd.z;
+  let tone = s1.x * wd.x + s1.y * wd.y + s1.z * wd.z;
+  // Where it meets the sand: how high above the sand under it (the
+  // seabed's, its moat and tails and all).
+  let above = world.y - height(world.xz);
+  // Sand-blasted: a hand or two up from the sand the surge throws sand at
+  // it, and it is worn pale and bare, nothing growing; ragged, higher where
+  // the rock juts out.
+  let blasted = 1.0 - smoothstep(0.1, 0.45, above + 0.1 * small + 0.08 * mid);
+  // The seam's zone: the bottom of the rock, where it turns into the
+  // sand. At the contact it is the floor, its sand, its normal, its
+  // light; a ragged hand or so up, wholly the rock; between, a smooth
+  // blend of the two, so nothing changes at a line.
+  let seam = 1.0 - smoothstep(0.0, 0.3, above + 0.06 * small + 0.04 * mid);
+  // The bump: the coral heads' knobs (exact, from the noise), and the
+  // tile's own slope; held to a sane tilt.
+  var slope = 0.07 * knobs * (-sign(small)) * smallG.yzw * near + 0.8 * detailSlope;
+  slope = slope * min(1.0, 1.5 / max(length(slope), 1e-6));
   // The material. Under it all, old limestone, pale and a little warm;
   // over it, in patches a hand to a metre across, their edges ragged:
   // coralline algae's crusts, pink to mauve, where the light is good;
   // algal turf, olive and brown, the commonest cover of a reef's rock;
   // bleached patches of dead coral, newly bare;
   // dark sponge and sea squirts in the shade;
-  // sand on what is flat enough to hold it;
-  // and the hollows darker.
+  // and none of them where the sand blasts it.
   let up = clamp(geometric.y, -1.0, 1.0);
-  let ragged = 0.35 * small + 0.25 * detail;
-  var albedo = vec3f(0.58, 0.55, 0.48) * (0.88 + 0.12 * small + 0.08 * detail);
-  let turf = smoothstep(-0.35, 0.35, large + 0.4 * mid + ragged);
-  albedo = mix(albedo, mix(vec3f(0.33, 0.33, 0.16), vec3f(0.4, 0.31, 0.2), smoothstep(-0.6, 0.6, mid + detail * 0.3)),
+  // (Roughened by noise a hand across, not by the detail tile, whose
+  // millimetres read back at this scale only as its mip levels' means.)
+  let ragged = 0.35 * small + 0.25 * triplanar(world * 3.3 + 47.0, w);
+  let living = 1.0 - 0.4 * blasted;
+  var albedo = vec3f(0.58, 0.55, 0.48);
+  let turf = smoothstep(-0.35, 0.35, large + 0.4 * mid + ragged) * living;
+  albedo = mix(albedo, mix(vec3f(0.33, 0.33, 0.16), vec3f(0.4, 0.31, 0.2), smoothstep(-0.6, 0.6, mid + ragged)),
                turf * 0.8);
-  let coralline = smoothstep(0.0, 0.6, mid - 0.5 * large + ragged) * smoothstep(-0.4, 0.3, up);
+  let coralline = smoothstep(0.0, 0.6, mid - 0.5 * large + ragged) * smoothstep(-0.4, 0.3, up) * living;
   albedo = mix(albedo, mix(vec3f(0.68, 0.43, 0.52), vec3f(0.55, 0.39, 0.56), smoothstep(-0.5, 0.5, small)),
-               coralline * 0.75);
-  let bare = smoothstep(0.45, 0.85, small + 0.4 * mid + 0.3 * detail) * (1.0 - coralline);
+               coralline * 0.75 * mix(0.7, 1.0, tone.y));
+  let bare = smoothstep(0.45, 0.85, small + 0.4 * mid + 0.3 * ragged) * (1.0 - coralline);
   albedo = mix(albedo, vec3f(0.76, 0.74, 0.68), bare * 0.6);
-  let sponge = smoothstep(0.4, 0.9, -mid - 0.3 * small + 0.2 * detail) * (1.0 - smoothstep(0.6, 0.95, in.shadow));
+  let sponge = smoothstep(0.4, 0.9, -mid - 0.3 * small + 0.2 * ragged)
+    * (1.0 - smoothstep(0.55, 0.85, ao)) * living;
   albedo = mix(albedo, vec3f(0.42, 0.18, 0.12), sponge * 0.7);
-  // Sand, where it is flat enough to lie: the floor's own grains, read
-  // from above as the floor's are (only on what faces up), speckled.
-  let dust = smoothstep(0.75, 0.92, up) * smoothstep(-0.4, 0.2, large + 0.3 * small + 0.2);
-  if (dust > 0.0) {
-    let grain = textureSampleLevel(grains, rippleSampler, world.xz / frame.grain.x, 0,
-                                   log2(max(1.0, dist * frame.camera.w * 512.0 / frame.grain.x)));
-    albedo = mix(albedo, vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z), dust * 0.9);
+  // Close up, the coral it was: the tile's brightness and grit, darker in
+  // its cavities; far off, their means.
+  albedo = albedo * (0.7 + 0.6 * tone.x) * (0.9 + 0.2 * tone.z)
+    * clamp(0.45 + 1.1 * cavity, 0.4, 1.1);
+  // Sand: settled where the rock is flat enough to hold it, and banked
+  // against its foot, filling the low places of its surface first (the
+  // tile's height), so that its edge follows the rock's own pits and
+  // ridges.
+  let settles = max(smoothstep(0.8, 0.95, up) * smoothstep(0.15, 0.3, large + 0.3 * small),
+                    (1.0 - smoothstep(0.0, 0.14, above + 0.05 * small)) * smoothstep(-0.3, 0.3, up));
+  let level = 0.95 * settles;
+  // And the last few centimetres up from the floor all sand, whatever
+  // way they face: banked against the rock, the floor's own surface
+  // running on up it, so that the two meet sand to sand, not in a line.
+  // (Its sand edge a little below the normal's: the sand thins out up
+  // the rock, in its low places last, the tile's height.)
+  let banked = 1.0 - smoothstep(0.1, 0.28, above + 0.06 * small + 0.04 * mid + 0.1 * (rise - 0.5));
+  let sand = max((1.0 - smoothstep(level - 0.06, level + 0.02, rise)) * step(0.01, settles), banked);
+  // (Read as the floor reads it, through its grid of triangles, so that
+  // the tile's repeating does not show: on the plane the face is most
+  // nearly square to.)
+  let gx = dpdx(world);
+  let gy = dpdy(world);
+  // Its colour and its grains' size the floor's at the foot (the
+  // seabed's map's moat and tails), so that the two are one sand.
+  let floorBed = seabedAt(world.xz);
+  let sorting = sandSorting(floorBed);
+  if (sand > 0.0) {
+    var grain : vec4f;
+    if (wd.y >= wd.x && wd.y >= wd.z) {
+      grain = grainsAt(world.xz, gx.xz, gy.xz, sorting, 0.0);
+    } else if (wd.x >= wd.z) {
+      grain = grainsAt(world.zy + 3.7, gx.zy, gy.zy, sorting, 0.0);
+    } else {
+      grain = grainsAt(world.xy + 5.3, gx.xy, gy.xy, sorting, 0.0);
+    }
+    albedo = mix(albedo, sandColour(floorBed, grain.a, 0.5), sand);
+    slope = mix(slope, vec3f(0.0), sand * 0.8);
   }
-  // Mottled at a hand's scale and finer: the crusts and films of what
-  // grows on the rock, never one even colour; darker in its hollows, the
-  // bake's, and the relief's own, close up.
-  // Close up, crunchy: grit, pale and dark, a couple of centimetres, and
-  // the polyps' cups dark.
-  let crunch = (0.78 + 0.32 * detail) * (0.8 + 0.4 * smoothstep(-0.5, 0.5, grit))
-    * (1.0 - 0.35 * cups) * (0.85 + 0.3 * smoothstep(-0.4, 0.4, micro));
-  albedo = albedo * mix(1.0, crunch, (1.0 - dust) * near);
-  albedo = albedo * mix(0.45, 1.0, in.ao) * mix(1.0, 0.55 + 0.6 * relief, near * (1.0 - dust));
+  n = normalize(n - (slope - n * dot(n, slope)));
+  // The normal across the seam: the floor's at the contact (its lip and
+  // all, so the two meet with the same normal, so the same light), the
+  // rock's own a hand up, blended smoothly between.
+  if (seam > 0.0) {
+    let fs = floorSlope(world.xz, 0.04);
+    let floorNormal = normalize(vec3f(-fs.x, 1.0, -fs.y));
+    let k = seam * seam * (3.0 - 2.0 * seam);
+    n = normalize(mix(n, floorNormal, k));
+  }
+  // In the sky's light, the sand's own shade too: the rock near the floor
+  // sees less of the sky, the more so facing down or along it.
+  let floorShade = mix(mix(0.35, 0.6, max(up, 0.0)), 1.0, smoothstep(0.0, 0.5, above));
   // The light: the sky's, as much as the rock lets in; the sun's through
   // the caustics where the sun's ray through here meets the surface, the
   // swell's slosh and bending, the clouds and the floating litter, taken
@@ -204,9 +306,17 @@ fn rockShadow(p : vec3f, n : vec3f) -> f32 {
   var shadow = in.shadow;
   let changing = smoothstep(0.0, 0.08, min(shadow, 1.0 - shadow)) * (1.0 - smoothstep(12.0, 15.0, dist));
   if (changing > 0.0) { shadow = mix(shadow, rockShadow(world, geometric), changing); }
+  // (The banked sand lit as the floor it continues is: by the seabed's
+  // map, its sky and its sun, so that the two meet without a step.)
+  let floorLit = floorBed;
+  // (The floor's shadow toward the contact; the rock's own above, which
+  // under an overhang the floor's map, a hand out, does not know.)
+  shadow = mix(shadow, min(shadow + 0.3, floorLit.y), seam);
   let shade = cloudShade(world, t) * (1.0 - 0.85 * floating) * shadow;
-  let diffuse = max(dot(n, sun), 0.0);
-  let sky = frame.skylight.rgb * in.ao * (0.55 + 0.45 * up);
+  // (In the seam, the sand's rough diffuse, as the floor is lit.)
+  let diffuse = mix(max(dot(n, sun), 0.0), roughDiffuse(n, sun, -normalize(in.relative), 0.5), seam);
+  let skySeen = mix(ao * floorShade * (0.55 + 0.45 * up), floorLit.x, seam);
+  let sky = frame.skylight.rgb * skySeen;
   let light = sky + frame.sunlight.rgb * diffuse * focus * down * shade;
   return vec4f(fogged(albedo * light, in.relative), 1.0);
 }

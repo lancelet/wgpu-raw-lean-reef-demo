@@ -98,8 +98,31 @@ def reefBakeBytes (sun : Vec3) (blobCount : Nat) : ByteArray :=
   let bytes := [nx, ny, nz, blobCount].foldl (fun b n => pushU32 b n.toUInt32) bytes
   [sun.x, sun.y, sun.z, 0].foldl pushF32 bytes
 
+/-- The rock's detail tile (`shaders/rockdetail.wgsl`): its width, in
+metres, and its texels a side (a quarter of a millimetre each). -/
+def rockTileWidth : Float := 0.25
+def rockTileTexels : Nat := 1024
+
+/-- The rock's detail tile, baked: two layers, the surface (its slope,
+cavity and height) and its colour, with their mip levels. -/
+def bakeRockDetail (device : Device) : IO Tile := do
+  let texture ← createTile device "rock detail" rockTileTexels (layers := 2)
+  let module ← createShader device "rock detail" Shaders.rockdetail
+  let pipeline ← tilePipeline device "rock detail" module "fs"
+  let layout ← pipeline.getBindGroupLayout 0
+  let encoder ← device.createCommandEncoder none
+  for layer in [0:2] do
+    let params ← createBuffer device "rock detail bake" .uniform
+      ([rockTileTexels.toFloat, rockTileWidth, layer.toFloat, 0].foldl pushF32 ByteArray.empty)
+    let data ← device.createBindGroup {
+      label := "rock detail", layout, entries := #[{ binding := 0, buffer := some params }] }
+    drawInto encoder pipeline data (← levelView texture 0 layer)
+    mipmaps device encoder texture rockTileTexels layer
+  (← device.getQueue).submit #[← encoder.finish none]
+  Tile.of device "rock detail" texture (layered := true)
+
 /-- The bommies, baked: the field (for the sand), and the mesh, with the
-draw's arguments. -/
+draw's arguments; and the rock's detail tile. -/
 structure Bommies where
   field     : Texture
   fieldView : TextureView
@@ -108,6 +131,7 @@ structure Bommies where
   args      : Buffer
   pipeline  : RenderPipeline
   data      : BindGroup
+  detail    : Tile
 
 /-- A storage buffer of `size` bytes, zeroed, with more uses if said. -/
 def storageBuffer (device : Device) (label : String) (size : Nat)
@@ -197,14 +221,22 @@ def Bommies.create (device : Device) (sun : Vec3) (shared : String)
   run facePass (groups nx 4) (groups ny 4) (groups nz 4)
   run countPass 1 1 1
   queue.submit #[← encoder.finish none]
-  -- The draw: the frame's bind group, and the vertices'.
+  -- The draw: the frame's bind group, and the vertices' and the detail
+  -- tile's.
+  let detail ← bakeRockDetail device
   let ownLayout ← device.createBindGroupLayout {
     label := "bommies"
-    entries := #[{ binding := 0, visibility := .vertex, buffer := { type := .readOnlyStorage } }]
+    entries := #[
+      { binding := 0, visibility := .vertex, buffer := { type := .readOnlyStorage } },
+      { binding := 1, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2dArray» } },
+      { binding := 2, visibility := .fragment, sampler := { type := .filtering } }]
   }
   let data ← device.createBindGroup {
     label := "bommies", layout := ownLayout
-    entries := #[{ binding := 0, buffer := some vertices }]
+    entries := #[{ binding := 0, buffer := some vertices },
+                 { binding := 1, textureView := some detail.view },
+                 { binding := 2, sampler := some detail.sampler }]
   }
   let drawModule ← createShader device "bommies" (shared ++ Shaders.bommie)
   let pipeline ← device.createRenderPipeline {
@@ -218,7 +250,7 @@ def Bommies.create (device : Device) (sun : Vec3) (shared : String)
     depthStencil := some {
       format := depthFormat, depthWriteEnabled := .true, depthCompare := .less }
   }
-  return { field, fieldView, vertices, indices, args, pipeline, data }
+  return { field, fieldView, vertices, indices, args, pipeline, data, detail }
 
 /-- Draw the bommies in `pass` (the frame's bind group set). -/
 def Bommies.draw (b : Bommies) (pass : RenderPassEncoder) : IO Unit := do

@@ -250,7 +250,7 @@ structure Water where
   scattered toward the camera by what the water holds, in shafts under
   the surface's bright filaments: its strength, 0 none; the steps a pixel
   marches its ray; and how far, in metres. -/
-  shafts        : Float := 0.6
+  shafts        : Float := 0.9
   shaftSteps    : Nat   := 24
   shaftReach    : Float := 30
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied

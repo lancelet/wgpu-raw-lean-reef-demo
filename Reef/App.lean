@@ -301,7 +301,7 @@ def Water.swellAtWind (w : Water) : Float := w.swellHeight * w.rougher
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
   /-- Every mesh's edges, as lines over it. -/
-  wireframe : Bool := true
+  wireframe : Bool := false
   /-- The grid, a line a metre at the floor's height. -/
   grid      : Bool := false
   deriving Repr, Inhabited

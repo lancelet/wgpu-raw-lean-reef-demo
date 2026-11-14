@@ -192,6 +192,31 @@ structure Sun where
 def Sun.direction (s : Sun) : Vec3 :=
   ⟨s.elevation.cos * s.azimuth.cos, s.elevation.sin, s.elevation.cos * s.azimuth.sin⟩
 
+/--
+The water, as `shaders/frame.wgsl` colours by it: a warm tropical reef's,
+clear, the far field turquoise, the light from above aqua and the sun's
+warm. Colours are linear. The water takes each colour at its own rate
+with distance, red first; what it scatters in along the way is its own
+colour, by the direction looked in.
+-/
+structure Water where
+  /-- The surface's height above the floor's zero, in metres. -/
+  depth      : Float := 4
+  /-- How fast the water takes red, green and blue, per metre. -/
+  extinction : Vec3  := ⟨0.13, 0.045, 0.03⟩
+  /-- Its colour seen level, far off; up, toward the surface; down. -/
+  horizon    : Vec3  := ⟨0.06, 0.42, 0.50⟩
+  zenith     : Vec3  := ⟨0.30, 0.72, 0.80⟩
+  deep       : Vec3  := ⟨0.02, 0.18, 0.26⟩
+  /-- The sun's light at the floor, and the sky's from all above. -/
+  sunlight   : Vec3  := ⟨1.05, 0.92, 0.70⟩
+  skylight   : Vec3  := ⟨0.18, 0.30, 0.33⟩
+  /-- The caustics: a cell's width on the surface, in metres, and their
+  strength, 0 none to 1 as designed. -/
+  caustic    : Float := 0.35
+  focus      : Float := 1
+  deriving Repr, Inhabited
+
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
   /-- Every mesh's edges, as lines over it. -/
@@ -217,6 +242,7 @@ structure App where
   ripples  : Ripples       := {}
   grains   : Grains        := {}
   sun      : Sun           := {}
+  water    : Water         := {}
   detail   : Float         := 1
   overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button

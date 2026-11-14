@@ -20,6 +20,14 @@ the origin: far from the world's origin, the floats the GPU works in would
 jitter. The shaders get the camera's place in the world besides, for what
 is a function of it (the floor's height, the grid's lines).
 
+## The water
+
+Drawn first, a triangle over the whole target coloured by each pixel's
+direction (`shaders/background.wgsl`), so that where nothing else is,
+there is water; what is drawn after fades into the same water with
+distance (`fogged`, in `shaders/frame.wgsl`). The frame is cleared to
+nothing in particular.
+
 ## The wireframe
 
 Every material's shader gets the frame's uniforms (`Shaders.frame`) and
@@ -54,6 +62,7 @@ structure Renderer where
   /-- The format drawn in: the targets' views are of it. -/
   format   : TextureFormat
   /-- The sand's pipeline, and its wireframe's. -/
+  water    : RenderPipeline
   sand     : RenderPipeline
   sandWire : RenderPipeline
   grid     : RenderPipeline
@@ -89,24 +98,37 @@ the leaves' range, the morph fraction, the height's amplitude), the eye's
 place in its leaf cell, with the cell's size, the ripples (the waves'
 direction, the wavelength, the height; the tile's width, where the
 displacement fades from and to, the cavity's strength), the grains (the
-tile's width, the relief, the speckle), and the sun's direction: 192
-bytes.
+tile's width, the relief, the speckle), the sun's direction, the camera's
+basis (with the tangents of half the view's width and height), the
+screen (its size, the time), and the water (the surface's height, the
+caustics; the extinction; the colours): 368 bytes.
 -/
-def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
-    (floor : Floor) (cells : Nat) (ripples : Ripples) (grains : Grains)
-    (sun : Sun) : ByteArray :=
+def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
+    (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
+    (ripples : Ripples) (grains : Grains) (sun : Sun) (water : Water) :
+    ByteArray :=
   let light := sun.direction
+  let pixel := 2 * tanHalf / max height 1
+  let eye := camera.position
+  let v (x : Vec3) (w : Float) := [x.x, x.y, x.z, w]
   let cell := floor.leaf / cells.toFloat
   let within (x : Float) := x - (x / cell).floor * cell
-  (viewProj.m.toList ++ [camera.x, camera.y, camera.z, pixel]
+  let w := water
+  (viewProj.m.toList ++ [eye.x, eye.y, eye.z, pixel]
     ++ [grid.spacing, grid.major, grid.extent, grid.fade]
     ++ [cells.toFloat, floor.range, floor.morph, floor.amplitude]
-    ++ [within camera.x, within camera.z, cell, 0]
+    ++ [within eye.x, within eye.z, cell, 0]
     ++ [ripples.direction.cos, ripples.direction.sin, ripples.wavelength,
         ripples.height]
     ++ [ripples.tile, ripples.fadeFrom, ripples.fadeTo, ripples.cavity]
     ++ [grains.tile, grains.relief, grains.speckle, 0]
-    ++ [light.x, light.y, light.z, 0]).foldl
+    ++ [light.x, light.y, light.z, 0]
+    ++ v camera.right (tanHalf * aspect) ++ v camera.up tanHalf
+    ++ v camera.forward 0
+    ++ [width, height, time, 0]
+    ++ [w.depth, w.caustic, w.focus, 0]
+    ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
+    ++ v w.sunlight 1 ++ v w.skylight 1).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -189,6 +211,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let shared := Shaders.frame ++ Shaders.wire
   let sandModule ← createShader device "sand" (shared ++ Shaders.sand)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
+  let waterModule ← createShader device "water" (shared ++ Shaders.background)
+  let water ← pipeline device "water" layout waterModule format
+    (depthCompare := .always) (depthWrite := false)
   let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
   let sandWire ← pipeline device "sand wire" layout sandModule format
     #[latticeLayout] (fragment := "fs_wire")
@@ -196,7 +221,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
-    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples grains {})
+    (frameBytes Mat4.identity Camera.initial 1 1 1 1 0 {} floor floor.cells
+      ripples grains {} {})
   let mesh ← FloorMesh.create device floor.cells
   let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
@@ -213,7 +239,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     ]
   }
   return {
-    device, format, sand, sandWire, grid, frame, data, horizons
+    device, format, water, sand, sandWire, grid, frame, data, horizons
     ripples := tile
     grains  := grainTile
     queue   := ← device.getQueue
@@ -274,8 +300,9 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     * Mat4.view Vec3.zero app.camera.right app.camera.up (-app.camera.forward)
   let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
-    (frameBytes viewProj eye (fovY / (max app.height 1).toFloat) app.grid
-      app.floor floor.cells app.ripples app.grains app.sun)
+    (frameBytes viewProj app.camera (fovY / 2).tan aspect app.width.toFloat
+      app.height.toFloat app.time app.grid app.floor floor.cells app.ripples
+      app.grains app.sun app.water)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0
@@ -290,7 +317,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
       view       := some view
       loadOp     := .clear
       storeOp    := .store
-      clearValue := { r := 0.02, g := 0.05, b := 0.09, a := 1 }
+      clearValue := { r := 0, g := 0, b := 0, a := 1 }
     }]
     depthStencilAttachment := some {
       view            := depth.view
@@ -300,6 +327,8 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     }
   }
   pass.setBindGroup 0 (some r.data) #[]
+  pass.setPipeline r.water
+  pass.draw 3 1 0 0
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)
   if app.overlays.wireframe then

@@ -499,7 +499,7 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
   let half ← r.device.createTexture {
     label  := "shafts"
     usage  := .renderAttachment ||| .textureBinding
-    size   := { width := max 1 (width / 2), height := max 1 (height / 2) }
+    size   := { width := max 1 (width / 4), height := max 1 (height / 4) }
     format := shaftFormat
   }
   let halfView ← half.createView none

@@ -191,6 +191,13 @@ fn swellBending(xz : vec2f, t : f32, fall : f32) -> vec3f {
 // at this moment: its height, and its slope along x and z; the swell
 // under it.
 fn seaAt(xz : vec2f) -> vec3f {
+  let s = swellAt(xz, frame.screen.z);
+  return chopAt(xz) + vec3f(s.height, s.slope);
+}
+
+// The chop alone at `xz` (the FFT sea, without the swell under it): for
+// whoever has the swell there already.
+fn chopAt(xz : vec2f) -> vec3f {
   let uv = xz / frame.caustic.x * f32(seaPoints);
   let i = vec2i(floor(uv));
   let f = fract(uv);
@@ -201,9 +208,7 @@ fn seaAt(xz : vec2f) -> vec3f {
   let f10 = sea[i00.y * seaPoints + i11.x].xyz;
   let f01 = sea[i11.y * seaPoints + i00.x].xyz;
   let f11 = sea[i11.y * seaPoints + i11.x].xyz;
-  let s = swellAt(xz, frame.screen.z);
-  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y)
-    + vec3f(s.height, s.slope);
+  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y);
 }
 
 // The water, looking along `dir` (unit) into it with nothing in the

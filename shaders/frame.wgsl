@@ -208,7 +208,8 @@ fn seaAt(xz : vec2f) -> vec3f {
 // and broken up by a field of noise, in patches a metre or two across.
 fn foamAt(xz : vec2f, t : f32) -> f32 {
   let wind = frame.caustic.w;
-  if (wind < 0.05) { return 0.0; }
+  // None under a fresh breeze: the sea does not break till then.
+  if (wind < 0.8) { return 0.0; }
   let dir = frame.ripple.xy;
   // The steepness a little upwind and a little ago: the foam trails the
   // crest that made it.

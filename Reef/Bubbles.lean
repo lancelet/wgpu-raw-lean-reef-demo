@@ -53,9 +53,9 @@ def Bubbles.create (device : Device) (water : Water) (shared : String)
     IO Bubbles := do
   let count := water.bubbles
   -- Every bubble born at the origin with age past its life: the first
-  -- step bears them all.
+  -- step bears them all. (A buffer must hold something: one, if none.)
   let mut initial := ByteArray.empty
-  for _ in [0:count] do
+  for _ in [0:max count 1] do
     initial := [0, 0, 0, 0.001, 100, 1, 0, 0].foldl pushF32 initial
   let buffer ← createBuffer device "bubbles" .storage initial
   let pool ← createBuffer device "bubble pool" .uniform (poolBytes count 0 0 0)
@@ -124,6 +124,7 @@ camera: the pool written (on `queue`, before the encoder's commands are
 submitted), the compute encoded on `encoder`. -/
 def Bubbles.step (b : Bubbles) (queue : Queue) (encoder : CommandEncoder)
     (frameData : BindGroup) (dt reach time : Float) : IO Unit := do
+  if b.count == 0 then return
   queue.writeBuffer b.pool 0 (poolBytes b.count dt reach time)
   let pass ← encoder.beginComputePass none
   pass.setBindGroup 0 (some frameData) #[]
@@ -134,6 +135,7 @@ def Bubbles.step (b : Bubbles) (queue : Queue) (encoder : CommandEncoder)
 
 /-- Draw the bubbles in `pass` (the frame's bind group set). -/
 def Bubbles.draw (b : Bubbles) (pass : RenderPassEncoder) : IO Unit := do
+  if b.count == 0 then return
   pass.setBindGroup 1 (some b.drawData) #[]
   pass.setPipeline b.pipeline
   pass.draw 4 b.count.toUInt32 0 0

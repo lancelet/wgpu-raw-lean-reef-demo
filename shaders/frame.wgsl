@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 432 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 448 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -29,6 +29,7 @@ struct Frame {
   surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
   shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
   swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
+  swellK   : vec4f,  // the swell's three waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber); w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -60,79 +61,86 @@ const seaPoints = 256u;
 // The height, and the slope along x and z. (Not in the caustics: at this
 // depth a wave so long focuses nothing.)
 const tau = 6.283185307;
-const swellPeriods = array<f32, 3>(1.0, 1.21, 0.83);
-const swellShares = array<f32, 3>(0.5, 0.3, 0.2);
-const swellHeadings = array<f32, 3>(0.0, 1.0, -0.7);
-const swellPhases = array<f32, 3>(0.0, 2.1, 4.4);
-const swellSets = array<f32, 3>(73.0, 101.0, 59.0);
 const gravity = 9.81;
 
-fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
-  let depth = frame.water.x;
+// Wave `i` of the swell: its period as a fraction of the swell's, its
+// share of the height, its heading as a fraction of the spread, its
+// phase, and how long its set is, in seconds. (Not arrays: indexing a
+// constant array at run time came out as nothing on Metal.)
+fn swellParams(i : i32) -> vec4f {
+  if (i == 0) { return vec4f(1.0, 0.5, 0.0, 0.0); }
+  if (i == 1) { return vec4f(1.21, 0.3, 1.0, 2.1); }
+  return vec4f(0.83, 0.2, -0.7, 4.4);
+}
+fn swellSet(i : i32) -> f32 {
+  if (i == 0) { return 73.0; }
+  if (i == 1) { return 101.0; }
+  return 59.0;
+}
+
+// Which way wave `i` heads: about the waves' direction (the ripples').
+fn swellHeading(i : i32) -> vec2f {
   let dir = frame.ripple.xy;
-  let period = frame.swell.y * swellPeriods[i];
+  let angle = frame.swell.z * swellParams(i).z;
+  return vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+               dir.x * sin(angle) + dir.y * cos(angle));
+}
+
+// Wave `i` at `xz` and `t`: its amplitude, its wave number, its phase.
+fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
+  let p = swellParams(i);
+  let period = frame.swell.y * p.x;
   let omega = tau / period;
-  let k = omega / sqrt(gravity * depth);
+  // (Not frame.swellK[i]: indexing a vector at run time came out as
+  // nothing on Metal, as indexing a constant array did.)
+  var k = frame.swellK.x;
+  if (i == 1) { k = frame.swellK.y; }
+  if (i == 2) { k = frame.swellK.z; }
   // The set: the wave's amplitude swelling and fading, slowly.
-  let swelling = 0.7 + 0.3 * sin(t * tau / swellSets[i] + swellPhases[i] * 1.7);
-  let amplitude = frame.swell.x * 0.5 * swellShares[i] * swelling;
-  let angle = frame.swell.z * swellHeadings[i];
-  let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
-                      dir.x * sin(angle) + dir.y * cos(angle));
-  let phase = k * dot(heading, xz) - omega * t + swellPhases[i];
+  let swelling = 0.7 + 0.3 * sin(t * tau / swellSet(i) + p.w * 1.7);
+  let amplitude = frame.swell.x * 0.5 * p.y * swelling;
+  let phase = k * dot(swellHeading(i), xz) - omega * t + p.w;
   return vec4f(amplitude, k, phase, 0.0);
 }
 
 fn swellAt(xz : vec2f, t : f32) -> vec3f {
   var height = 0.0;
   var slope = vec2f(0.0);
-  let dir = frame.ripple.xy;
   for (var i = 0; i < 3; i++) {
     let w = swellWave(i, xz, t);
-    let angle = frame.swell.z * swellHeadings[i];
-    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
-                        dir.x * sin(angle) + dir.y * cos(angle));
     height += w.x * sin(w.z);
-    slope += w.x * w.y * cos(w.z) * heading;
+    slope += w.x * w.y * cos(w.z) * swellHeading(i);
   }
   return vec3f(height, slope);
 }
 
 // The surge: the water's sway along the floor under the swell at `xz`,
-// at time `t`, in metres a second, for what lives there to follow: in
-// shallow water a wave's orbit flattens to a back-and-forth, its speed
-// the amplitude times the frequency over the wave number times the
-// depth.
+// at time `t`, in metres a second, for what lives there to follow: a
+// wave's orbit, flattened at the bottom to a back-and-forth, its speed
+// the amplitude times the frequency over the hyperbolic sine of the
+// wave number times the depth.
 fn surgeAt(xz : vec2f, t : f32) -> vec2f {
   var surge = vec2f(0.0);
   let depth = frame.water.x;
-  let dir = frame.ripple.xy;
   for (var i = 0; i < 3; i++) {
     let w = swellWave(i, xz, t);
-    let angle = frame.swell.z * swellHeadings[i];
-    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
-                        dir.x * sin(angle) + dir.y * cos(angle));
-    let omega = tau / (frame.swell.y * swellPeriods[i]);
-    surge += w.x * omega / (w.y * depth) * sin(w.z) * heading;
+    let omega = tau / (frame.swell.y * swellParams(i).x);
+    surge += w.x * omega / sinh(w.y * depth) * sin(w.z) * swellHeading(i);
   }
   return surge;
 }
 
 // How far the swell has carried the surface's water sideways at `xz`,
-// at time `t`, in metres: the surge's sway, summed, which in shallow
-// water is the wave's amplitude over its wave number times the depth,
-// half a metre for a lagoon's swell. The chop rides on the water, so
-// its caustics slide back and forth on the floor with each wave.
+// at time `t`, in metres: the orbit's reach at the surface, the
+// amplitude over the hyperbolic tangent of the wave number times the
+// depth. The chop rides on the water, so its caustics slide back and
+// forth on the floor with each wave.
 fn swellDriftAt(xz : vec2f, t : f32) -> vec2f {
   var drift = vec2f(0.0);
   let depth = frame.water.x;
-  let dir = frame.ripple.xy;
   for (var i = 0; i < 3; i++) {
     let w = swellWave(i, xz, t);
-    let angle = frame.swell.z * swellHeadings[i];
-    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
-                        dir.x * sin(angle) + dir.y * cos(angle));
-    drift += w.x / (w.y * depth) * cos(w.z) * heading;
+    drift += w.x / tanh(w.y * depth) * cos(w.z) * swellHeading(i);
   }
   return drift;
 }

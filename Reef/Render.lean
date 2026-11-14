@@ -1,6 +1,7 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
+import Reef.Caustics
 import Reef.Grains
 import Reef.Ripples
 import Reef.Timing
@@ -66,16 +67,18 @@ structure Renderer where
   /-- The format drawn in: the targets' views are of it. -/
   format   : TextureFormat
   /-- The sand's pipeline, and its wireframe's. -/
-  water    : RenderPipeline
+  backdrop : RenderPipeline
   sand     : RenderPipeline
   sandWire : RenderPipeline
   grid     : RenderPipeline
   /-- The frame's uniforms, written each frame. -/
   frame    : Buffer
-  /-- The ripples' tile, and their horizons', and the grains', baked once. -/
+  /-- The ripples' tile, and their horizons', and the grains', baked once;
+  and the caustics' loop. -/
   ripples  : Tile
   horizons : Tile
   grains   : Tile
+  caustics : Caustics
   /-- The bind group of the frame's uniforms, the floor's nodes and the
   tiles, for every pipeline here. -/
   data     : BindGroup
@@ -109,7 +112,8 @@ displacement fades from and to, the cavity's strength), the grains (the
 tile's width, the relief, the speckle), the sun's direction, the camera's
 basis (with the tangents of half the view's width and height), the
 screen (its size, the time), and the water (the surface's height, the
-caustics; the extinction; the colours): 368 bytes.
+caustics' strength; the extinction; the colours; the caustics' loop):
+384 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
@@ -134,9 +138,10 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v camera.right (tanHalf * aspect) ++ v camera.up tanHalf
     ++ v camera.forward 0
     ++ [width, height, time, 0]
-    ++ [w.depth, w.caustic, w.focus, w.speed]
+    ++ [w.depth, w.focus, 0, 0]
     ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
-    ++ v w.sunlight 1 ++ v w.skylight 1).foldl
+    ++ v w.sunlight 1 ++ v w.skylight 1
+    ++ [w.tile, w.loop, w.frames.toFloat, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -191,10 +196,10 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
 def passes : Array String := #["frame"]
 
 /-- A renderer drawing into targets of `format`, the floor `floor`, its
-ripples `ripples` and its grains `grains` (baked here); timing its passes
-if `timestamps`. -/
+ripples `ripples` and its grains `grains` (baked here), under `water`
+(its caustics baked here too); timing its passes if `timestamps`. -/
 def Renderer.create (device : Device) (format : TextureFormat)
-    (floor : Floor) (ripples : Ripples) (grains : Grains)
+    (floor : Floor) (ripples : Ripples) (grains : Grains) (water : Water)
     (timestamps : Bool := false) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
   -- nodes, and the tiles, so that one bind group serves them all (a
@@ -213,7 +218,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
       { binding := 5, visibility := .fragment,
-        texture := { sampleType := .float, viewDimension := .«2d» } }
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 6, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2dArray» } }
     ]
   }
   let layout ← device.createPipelineLayout {
@@ -225,7 +232,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let sandModule ← createShader device "sand" (shared ++ Shaders.sand)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
-  let water ← pipeline device "water" layout waterModule format
+  let backdrop ← pipeline device "water" layout waterModule format
     (depthCompare := .always) (depthWrite := false)
   let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
   let sandWire ← pipeline device "sand wire" layout sandModule format
@@ -235,8 +242,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
     (frameBytes Mat4.identity Camera.initial 1 1 1 1 0 {} floor floor.cells
-      ripples grains {} {})
+      ripples grains {} water)
   let mesh ← FloorMesh.create device floor.cells
+  let caustics ← Caustics.bake device water
   let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
   let data ← device.createBindGroup {
@@ -248,11 +256,12 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 2, textureView := some tile.view },
       { binding := 3, sampler := some tile.sampler },
       { binding := 4, textureView := some grainTile.view },
-      { binding := 5, textureView := some horizons.view }
+      { binding := 5, textureView := some horizons.view },
+      { binding := 6, textureView := some caustics.view }
     ]
   }
   return {
-    device, format, water, sand, sandWire, grid, frame, data, horizons
+    device, format, backdrop, sand, sandWire, grid, frame, data, horizons, caustics
     ripples := tile
     grains  := grainTile
     queue   := ← device.getQueue
@@ -344,7 +353,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     timestampWrites := Timing.writesFor r.timing 0
   }
   pass.setBindGroup 0 (some r.data) #[]
-  pass.setPipeline r.water
+  pass.setPipeline r.backdrop
   pass.draw 3 1 0 0
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)

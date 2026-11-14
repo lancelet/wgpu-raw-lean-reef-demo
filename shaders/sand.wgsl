@@ -239,7 +239,24 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let cavity = mix(1.0, tile.a, frame.tiling.w);
   let toSurface = (frame.water.x - world.y) / max(sun.y, 0.1);
   let onSurface = world.xz + sun.xz * toSurface;
-  let focus = caustics(onSurface, foot);
+  // The caustics' loop at this moment: the layer, and the next, blended;
+  // blurred at least by the sun's own width, half a degree of sky, over
+  // the water the light has come down through.
+  let causticTile = frame.caustic.x;
+  let moments = frame.caustic.z;
+  let moment = fract(frame.screen.z / frame.caustic.y) * moments;
+  let layer = i32(floor(moment));
+  let next = (layer + 1) % i32(moments);
+  let sunBlur = toSurface * 0.0093;
+  let blurAlong = footAlong * max(1.0, sunBlur / max(length(footAlong), 1e-5));
+  let blurAcross = footAcross * max(1.0, sunBlur / max(length(footAcross), 1e-5));
+  let uv = onSurface / causticTile;
+  let dx = blurAlong / causticTile;
+  let dy = blurAcross / causticTile;
+  let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
+                     textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
+                     fract(moment)) * causticBrightest;
+  let focus = mix(vec3f(1.0), gathered, frame.water.y);
   let light = frame.skylight.rgb * cavity
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;

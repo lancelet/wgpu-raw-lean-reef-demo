@@ -46,7 +46,8 @@ on|off` say whether those show at the start; `--relief FACTOR` and
 across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
 its height and slopes (and its cavity, to a `-cavity` file beside it),
 for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
-normal, and brightness). How fast it draws, on the CPU and (where the
+normal, and brightness), and `--caustic-tile FILE` the caustics' first
+moment. How fast it draws, on the CPU and (where the
 device can stamp time) on the GPU, and where the camera is, are in the
 bottom right; `reef --frames N` prints the last of that as it ends.
 
@@ -119,6 +120,10 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
   start from phasor noise.
 - `Reef/Grains.lean`: the sand's grains, a tile of a few centimetres,
   baked likewise.
+- `Reef/Caustics.lean`: the sun's light through the sea's surface, baked
+  at the start as a loop of moments: the surface by a fast Fourier
+  transform in compute (`shaders/ocean.wgsl`), drawn down the sun's rays
+  (`shaders/caustics.wgsl`).
 - `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.

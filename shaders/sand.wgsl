@@ -150,7 +150,8 @@ fn cornerOffset(corner : vec2f) -> vec2f {
 // tilt and the brightness are scaled back up to the tile's contrast; the
 // normal's height is the plain blend, as its length is what is wanted
 // of it.
-fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32) -> vec4f {
+fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32,
+            still : f32) -> vec4f {
   let uv = xz / frame.grain.x;
   let corners = triangleAt(uv);
   var sum = vec4f(0.0);
@@ -161,9 +162,13 @@ fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32) -> vec4f {
     // over the ripples, and about the origin that would smear the tile.
     let cornerUV = mat2x2f(1.0, 0.0, 0.5, 0.8660254) * corner.xy * grainTriangles;
     let local = (uv - cornerUV) / coarser + cornerUV;
-    let read = textureSampleGrad(grains, rippleSampler, local + cornerOffset(corner.xy),
-                                 along / (frame.grain.x * coarser),
-                                 across / (frame.grain.x * coarser));
+    // The layer with the traces where the sand is still, the one without
+    // where it moves: both, blended, where it is between.
+    let at = local + cornerOffset(corner.xy);
+    let dx = along / (frame.grain.x * coarser);
+    let dy = across / (frame.grain.x * coarser);
+    let read = mix(textureSampleGrad(grains, rippleSampler, at, 1, dx, dy),
+                   textureSampleGrad(grains, rippleSampler, at, 0, dx, dy), still);
     sum += corner.z * (read - 0.5);
     weights += corner.z * corner.z;
   }
@@ -221,7 +226,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // the crests and leaves the coarse in the troughs, which are a little
   // darker for it.
   let sorted = mix(1.35, 0.8, tile.r);
-  let grain = grainsAt(world.xz, footAlong, footAcross, sorted);
+  // What lives in the sand digs where the sand is still: in the ripples'
+  // troughs, not on their crests, which the water sweeps.
+  let still = 1.0 - smoothstep(0.3, 0.7, tile.r);
+  let grain = grainsAt(world.xz, footAlong, footAcross, sorted, still);
   let tilt = grain.xyz;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));

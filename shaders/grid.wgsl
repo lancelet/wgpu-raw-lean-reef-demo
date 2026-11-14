@@ -50,5 +50,5 @@ fn axis(x : f32) -> f32 {
   color = mix(color, vec3f(0.3, 0.5, 1.0), z);
   let coverage = max(max(minor * 0.7, major), max(x, z));
   let fade = visible(length(in.relative));
-  return vec4f(color, coverage * fade);
+  return vec4f(fogged(color, in.relative), coverage * fade);
 }

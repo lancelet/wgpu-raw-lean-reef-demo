@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 176 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 448 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -13,6 +13,23 @@ struct Frame {
   ripple   : vec4f,  // the waves' direction (x, z), the ripples' wavelength, their height, in metres
   tiling   : vec4f,  // the ripples' tile, in metres; the distance their displacement fades from, and to; the cavity's strength
   grain    : vec4f,  // the grains' tile, in metres; their relief; their speckle; w unused
+  sun      : vec4f,  // where the sun's light comes from: unit; w unused
+  right    : vec4f,  // the camera's right, and the tangent of half the view's width
+  up       : vec4f,  // the camera's up, and the tangent of half the view's height
+  forward  : vec4f,  // the camera's forward; w unused
+  screen   : vec4f,  // the target's width and height, in pixels; the time, in seconds; w unused
+  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' strength; z, w unused
+  extinct  : vec4f,  // how fast the water takes each colour, per metre; w unused
+  horizon  : vec4f,  // the water's colour seen level, far off
+  zenith   : vec4f,  // ... seen up, toward the surface
+  deep     : vec4f,  // ... seen down, into the depths
+  sunlight : vec4f,  // the sun's light at the floor
+  skylight : vec4f,  // the sky's, from all above
+  caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; the wind over the sea, 0 calm to 1 fresh, for the capillaries
+  surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
+  shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
+  swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
+  swellK   : vec4f,  // the swell's four waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber)
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -22,13 +39,198 @@ struct Frame {
 // sampled: repeating, filtered by the pixel's footprint.
 @group(0) @binding(2) var ripples : texture_2d<f32>;
 @group(0) @binding(3) var rippleSampler : sampler;
-@group(0) @binding(4) var grains : texture_2d<f32>;
+@group(0) @binding(4) var grains : texture_2d_array<f32>;
+@group(0) @binding(5) var horizons : texture_2d<f32>;
+// The caustics, baked as a loop (`Reef/Caustics.lean`): a layer a moment,
+// over one tile of the surface, the light over its brightest.
+@group(0) @binding(6) var caustics : texture_2d_array<f32>;
+const causticBrightest = 8.0;
+// The sea's surface at this moment (`shaders/ocean.wgsl`, evolved each
+// frame): the height and the slopes at each point of a grid over one
+// tile, `seaPoints` a side.
+@group(0) @binding(7) var<storage, read> sea : array<vec4f>;
+const seaPoints = 256u;
 
-// The background, which what is far fades into: the colour the frame is
-// cleared to.
-const background = vec3f(0.02, 0.05, 0.09);
+// The swell at `xz`, in the world, at time `t`: what is left of the
+// ocean's long waves over the reef's crest, a slow heave of the surface
+// that the chop rides on. Three waves of periods that share no multiple,
+// headed a little apart about the waves' direction (the ripples'), each
+// swelling and fading over a minute or so out of step with the others,
+// so that sets come and go and nothing repeats; at the speed shallow
+// water gives a long wave, the square root of gravity times the depth.
+// The height, and the slope along x and z. (Not in the caustics: at this
+// depth a wave so long focuses nothing.)
+const tau = 6.283185307;
+const gravity = 9.81;
 
-// How much of something `dist` from the camera shows, the rest fog.
+// Wave `i` of the swell: its period as a fraction of the swell's, its
+// share of the height, its heading as a fraction of the spread, its
+// phase, and how long its set is, in seconds. (Not arrays: indexing a
+// constant array at run time came out as nothing on Metal.)
+fn swellParams(i : i32) -> vec4f {
+  if (i == 0) { return vec4f(1.0, 0.45, 0.0, 0.0); }
+  if (i == 1) { return vec4f(1.21, 0.25, 1.0, 2.1); }
+  if (i == 2) { return vec4f(0.83, 0.15, -0.7, 4.4); }
+  // A second sea crossing the first, from a wind elsewhere: longer,
+  // lower, half a right angle and more off; where the two cross, the
+  // surface's crests and troughs knot into diamonds.
+  return vec4f(1.55, 0.2, 3.6, 1.3);
+}
+fn swellSet(i : i32) -> f32 {
+  if (i == 0) { return 73.0; }
+  if (i == 1) { return 101.0; }
+  if (i == 2) { return 59.0; }
+  return 89.0;
+}
+
+// Which way wave `i` heads: about the waves' direction (the ripples').
+fn swellHeading(i : i32) -> vec2f {
+  let dir = frame.ripple.xy;
+  let angle = frame.swell.z * swellParams(i).z;
+  return vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+               dir.x * sin(angle) + dir.y * cos(angle));
+}
+
+// Wave `i` at `xz` and `t`: its amplitude, its wave number, its phase.
+fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
+  let p = swellParams(i);
+  let period = frame.swell.y * p.x;
+  let omega = tau / period;
+  // (Not frame.swellK[i]: indexing a vector at run time came out as
+  // nothing on Metal, as indexing a constant array did.)
+  var k = frame.swellK.x;
+  if (i == 1) { k = frame.swellK.y; }
+  if (i == 2) { k = frame.swellK.z; }
+  if (i == 3) { k = frame.swellK.w; }
+  // The set: the wave's amplitude swelling and fading, slowly.
+  let swelling = 0.7 + 0.3 * sin(t * tau / swellSet(i) + p.w * 1.7);
+  let amplitude = frame.swell.x * 0.5 * p.y * swelling;
+  let phase = k * dot(swellHeading(i), xz) - omega * t + p.w;
+  return vec4f(amplitude, k, phase, 0.0);
+}
+
+// The swell at `xz` (the water's resting place) and `t`, as Gerstner
+// has it: the water goes round in orbits, up and down and to and fro,
+// so the surface's points move sideways too, which crowds the crests
+// into narrow ridges and spreads the troughs flat. The height; the
+// sideways reach, in metres (the orbit's, the amplitude over the
+// hyperbolic tangent of the wave number times the depth); the slope of
+// the surface, along x and z; and the curvature across the crests,
+// positive under a crest, which focuses the sun's light a little.
+struct Swell {
+  height    : f32,
+  offset    : vec2f,
+  slope     : vec2f,
+  curvature : f32,
+}
+
+fn swellAt(xz : vec2f, t : f32) -> Swell {
+  var s : Swell;
+  s.height = 0.0;
+  s.offset = vec2f(0.0);
+  s.slope = vec2f(0.0);
+  s.curvature = 0.0;
+  let depth = frame.water.x;
+  // The trochoid's slope: the height's rate against the surface's
+  // sideways motion, summed over the waves as a product would be.
+  var sideways = 1.0;
+  for (var i = 0; i < 4; i++) {
+    let w = swellWave(i, xz, t);
+    let heading = swellHeading(i);
+    let reach = w.x / tanh(w.y * depth);
+    s.height += w.x * sin(w.z);
+    s.offset += reach * cos(w.z) * heading;
+    s.slope += w.x * w.y * cos(w.z) * heading;
+    s.curvature += w.x * w.y * w.y * sin(w.z);
+    sideways -= reach * w.y * sin(w.z);
+  }
+  s.slope = s.slope / max(sideways, 0.3);
+  return s;
+}
+
+// The surge: the water's sway along the floor under the swell at `xz`,
+// at time `t`, in metres a second, for what lives there to follow: a
+// wave's orbit, flattened at the bottom to a back-and-forth, its speed
+// the amplitude times the frequency over the hyperbolic sine of the
+// wave number times the depth.
+fn surgeAt(xz : vec2f, t : f32) -> vec2f {
+  var surge = vec2f(0.0);
+  let depth = frame.water.x;
+  for (var i = 0; i < 4; i++) {
+    let w = swellWave(i, xz, t);
+    let omega = tau / (frame.swell.y * swellParams(i).x);
+    surge += w.x * omega / sinh(w.y * depth) * sin(w.z) * swellHeading(i);
+  }
+  return surge;
+}
+
+// How far the swell has carried the surface's water sideways at `xz`,
+// at time `t`, in metres: the orbit's reach at the surface, the
+// amplitude over the hyperbolic tangent of the wave number times the
+// depth. The chop rides on the water, so its caustics slide back and
+// forth on the floor with each wave.
+fn swellDriftAt(xz : vec2f, t : f32) -> vec2f {
+  return swellAt(xz, t).offset;
+}
+
+// The swell's bending of the sun's light that comes through at `xz`,
+// at `t`, as it lands `fall` metres below: how far the landing is moved
+// (the surface's tilt bends the ray by its share, a quarter, of the
+// tilt), and how much brighter the light lands (the surface's curvature
+// draws the rays together, under a crest, or apart, in a trough: a few
+// percent at the floor's depth).
+fn swellBending(xz : vec2f, t : f32, fall : f32) -> vec3f {
+  let s = swellAt(xz, t);
+  let bend = 1.0 - 1.0 / 1.333;
+  let shift = s.slope * bend * fall;
+  let focus = 1.0 / max(1.0 - s.curvature * bend * fall, 0.5);
+  return vec3f(shift, focus);
+}
+
+// The sea's surface at `xz`, in the world, between the grid's points,
+// at this moment: its height, and its slope along x and z; the swell
+// under it.
+fn seaAt(xz : vec2f) -> vec3f {
+  let s = swellAt(xz, frame.screen.z);
+  return chopAt(xz) + vec3f(s.height, s.slope);
+}
+
+// The chop alone at `xz` (the FFT sea, without the swell under it): for
+// whoever has the swell there already.
+fn chopAt(xz : vec2f) -> vec3f {
+  let uv = xz / frame.caustic.x * f32(seaPoints);
+  let i = vec2i(floor(uv));
+  let f = fract(uv);
+  let n = i32(seaPoints);
+  let i00 = vec2u(vec2i((i.x % n + n) % n, (i.y % n + n) % n));
+  let i11 = (i00 + vec2u(1u)) % seaPoints;
+  let f00 = sea[i00.y * seaPoints + i00.x].xyz;
+  let f10 = sea[i00.y * seaPoints + i11.x].xyz;
+  let f01 = sea[i11.y * seaPoints + i00.x].xyz;
+  let f11 = sea[i11.y * seaPoints + i11.x].xyz;
+  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y);
+}
+
+// The water, looking along `dir` (unit) into it with nothing in the
+// way: the horizon's colour level, brighter up toward the surface,
+// darker down.
+fn water(dir : vec3f) -> vec3f {
+  let up = smoothstep(-0.05, 0.6, dir.y);
+  let down = smoothstep(0.05, -0.5, dir.y);
+  return mix(mix(frame.horizon.rgb, frame.zenith.rgb, up), frame.deep.rgb, down);
+}
+
+// `colour`, seen through the water at `relative` from the camera: what
+// the water has not taken of it, and the water's own light scattered in
+// along the way, each colour at its own rate.
+fn fogged(colour : vec3f, relative : vec3f) -> vec3f {
+  let dist = length(relative);
+  let through = exp(-frame.extinct.rgb * dist);
+  return mix(water(relative / max(dist, 1e-4)), colour, through);
+}
+
+// How much of something `dist` from the camera shows, the rest fog: for
+// what fades by an alpha (the overlays).
 fn visible(dist : f32) -> f32 {
   return exp(-dist / frame.grid.w);
 }
@@ -64,12 +266,21 @@ fn noise(p : vec2f) -> f32 {
 }
 
 // The floor's height at `xz`, in the world: the large-scale elevation,
-// three octaves of noise, from fifty metres across to five, about a metre
-// of relief in all at an amplitude of 1 (`Reef.Floor.relief` bounds it).
+// four octaves of noise, from fifty metres across to two and a half, the
+// mounds and hollows of a back-reef's sand, a metre and a half of relief
+// in all at an amplitude of 1; and on that the sand waves and hummocks,
+// a couple of metres across and under one, some centimetres high, the
+// waves drawn out along the ripples' crests (across the waves'
+// direction), as sand waves lie (`Reef.Floor.relief` bounds the whole).
 // The ripples are on top of this (`shaders/sand.wgsl`).
 fn height(xz : vec2f) -> f32 {
-  return frame.floor.w * (0.6 * noise(xz / 40.0) + 0.3 * noise(xz / 13.0 + 7.0)
-                          + 0.1 * noise(xz / 5.0 + 3.0));
+  let dir = frame.ripple.xy;
+  let along = vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x)));
+  return frame.floor.w * (0.6 * noise(xz / 40.0) + 0.45 * noise(xz / 13.0 + 7.0)
+                          + 0.25 * noise(xz / 5.0 + 3.0)
+                          + 0.12 * noise(xz / 2.5 + 11.0))
+       + 0.1 * noise(along / vec2f(1.6, 3.2) + 5.0)
+       + 0.025 * noise(xz / 0.7 + 9.0);
 }
 
 // The floor's slope at `xz`, in the world (the height's rise along x and
@@ -78,4 +289,119 @@ fn floorSlope(xz : vec2f, e : f32) -> vec2f {
   let dx = height(xz + vec2f(e, 0.0)) - height(xz - vec2f(e, 0.0));
   let dz = height(xz + vec2f(0.0, e)) - height(xz - vec2f(0.0, e));
   return vec2f(dx, dz) / (2.0 * e);
+}
+
+// The sun as it is in the air, where the light comes from (up): Snell's
+// law bends the water's direction (`frame.sun`) further from the
+// vertical.
+fn sunInSky() -> vec3f {
+  let horizontal = frame.sun.xz;
+  let sinWater = length(horizontal);
+  let sinAir = min(1.333 * sinWater, 0.9995);
+  let along = horizontal / max(sinWater, 1e-5);
+  return vec3f(along.x * sinAir, sqrt(1.0 - sinAir * sinAir), along.y * sinAir);
+}
+
+// The clouds over the reef, at `xz` on their layer a kilometre up, at
+// `t`: 0 clear sky to 1 thick cloud. Fair-weather cumulus, a few hundred
+// metres across, a third of the sky, drifting with the wind.
+const cloudHeight = 1000.0;
+fn cloudsAt(xz : vec2f, t : f32) -> f32 {
+  let p = (xz - frame.ripple.xy * t * 6.0) / 350.0;
+  let n = 0.6 * noise(p) + 0.3 * noise(p * 2.3 + 5.0) + 0.1 * noise(p * 5.1 + 9.0);
+  return smoothstep(0.08, 0.38, n);
+}
+
+// How much of the sun's light the clouds let through to `world`, under
+// the water: where the sun's ray through it met the cloud layer. Shadows
+// a few hundred metres across pass over the reef, softly.
+fn cloudShade(world : vec3f, t : f32) -> f32 {
+  let up = sunInSky();
+  let layer = world.xz + up.xz / max(up.y, 0.1) * cloudHeight;
+  return 1.0 - 0.65 * cloudsAt(layer, t);
+}
+
+// What floats on the surface at `xz` (where the surface is), at `t`,
+// within an edge `edge` metres soft: how much of it there is, 0 to 1,
+// and which: 0 a leaf, 1 a blade of seagrass, 2 a clump of sargassum,
+// 3 flecks. Things a lagoon by a vegetated cay carries: flecks of
+// organic matter everywhere, seagrass blades and leaves a few to ten
+// square metres; gathered by the wind's surface circulation (Langmuir's)
+// into windrows, lines along the wind eight metres or so apart, dense in
+// the lines and sparse between, wandering. One to some of the cells of a
+// grid a metre and a half across, riding with the water (the swell's
+// orbits, `offset`, and the wind's slow drift), each turned its own way
+// and turning slowly; kept well inside its cell, so that a point need
+// look in its own cell only.
+fn debrisAt(xz : vec2f, offset : vec2f, t : f32, edge : f32) -> vec2f {
+  let dir = frame.ripple.xy;
+  let rest = xz - offset - dir * t * 0.12;
+  let cell = 1.5;
+  let base = vec2i(floor(rest / cell));
+  // The windrows: across the wind, every eight metres or so, wandering.
+  let across = dot(rest, vec2f(-dir.y, dir.x));
+  let along = dot(rest, dir);
+  let row = abs(fract((across + 2.0 * noise(vec2f(along / 20.0, 3.0))) / 8.0) - 0.5) * 2.0;
+  let gathered = mix(0.12, 0.9, smoothstep(0.75, 0.95, row));
+  var cover = 0.0;
+  var kind = 0.0;
+  for (var j = 0; j <= 0; j++) {
+    for (var i = 0; i <= 0; i++) {
+      let c = base + vec2i(i, j);
+      var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ 0x9e37u;
+      h = h ^ (h >> 15u); h = h * 0x2c1b3c6du; h = h ^ (h >> 12u);
+      let r0 = f32(h & 0xffu) / 255.0;
+      let r1 = f32((h >> 8u) & 0xffu) / 255.0;
+      let r2 = f32((h >> 16u) & 0xffu) / 255.0;
+      let r3 = f32((h >> 24u) & 0xffu) / 255.0;
+      // Flecks wherever; the larger things where the rows gather them.
+      let chance = select(gathered * 0.5, 0.6, r3 < 0.35);
+      if (r0 > chance) { continue; }
+      let centre = (vec2f(c) + vec2f(r1, r2) * 0.64 + 0.18) * cell;
+      let angle = r3 * 6.2832 + t * (r1 - 0.5) * 0.15;
+      let along = vec2f(cos(angle), sin(angle));
+      let d = rest - centre;
+      let u = dot(d, along);
+      let v = dot(d, vec2f(-along.y, along.x));
+      // Flecks the most, then seagrass, leaves, and sargassum the least.
+      let pick = fract(r0 * 7.31 + r3 * 3.7);
+      var which = 3.0;
+      if (r3 >= 0.35) {
+        if (pick < 0.45) { which = 1.0; } else if (pick < 0.8) { which = 0.0; } else { which = 2.0; }
+      }
+      var sd = 1.0;  // signed distance, metres, inside negative
+      if (which < 1.0) {
+        // A leaf: an almond eight to fourteen centimetres long.
+        let len = 0.04 + 0.03 * r2;
+        let wid = len * 0.45 * (1.0 - (u / len) * (u / len));
+        sd = max(abs(u) - len, abs(v) - max(wid, 0.0));
+      } else if (which < 2.0) {
+        // A blade of seagrass: a strip a centimetre wide, twenty to
+        // forty long, gently curved.
+        let len = 0.1 + 0.1 * r1;
+        let bend = v - 0.6 * (u * u) / len * (r2 - 0.5);
+        sd = max(abs(u) - len, abs(bend) - 0.005);
+      } else if (which < 3.0) {
+        // Sargassum: a clump of little bladders and fronds.
+        sd = 1.0;
+        for (var k = 0u; k < 7u; k++) {
+          let a = f32(k) * 2.39996 + r3 * 6.0;
+          let rad = (0.03 + 0.08 * fract(f32(k) * 0.618 + r1)) * (0.8 + 0.4 * r2);
+          let at = vec2f(cos(a), sin(a)) * rad;
+          sd = min(sd, length(vec2f(u, v) - at) - (0.012 + 0.012 * fract(f32(k) * 0.37 + r2)));
+        }
+      } else {
+        // Flecks: a few specks, a few millimetres each.
+        sd = 1.0;
+        for (var k = 0u; k < 5u; k++) {
+          let a = f32(k) * 2.39996 + r2 * 6.0;
+          let at = vec2f(cos(a), sin(a)) * (0.05 + 0.15 * fract(f32(k) * 0.71 + r3));
+          sd = min(sd, length(vec2f(u, v) - at) - 0.004);
+        }
+      }
+      let here = 1.0 - smoothstep(-edge, edge, sd);
+      if (here > cover) { cover = here; kind = which; }
+    }
+  }
+  return vec2f(cover, kind);
 }

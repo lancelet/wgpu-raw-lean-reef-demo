@@ -19,7 +19,8 @@ does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
 back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
 `[` and `]` halve and double the detail, how finely every mesh is made;
-F fills the screen, or leaves it; Escape ends the demo, natively.
+`,` and `.` swing the sun round, `-` and `=` lower and raise it; F fills
+the screen, or leaves it; Escape ends the demo, natively.
 -/
 
 open WebGPU.Window
@@ -73,13 +74,15 @@ structure Floor where
   level's range out. -/
   morph     : Float := 0.7
   /-- The large-scale elevation's amplitude, as a factor of the height
-  function's (`shaders/frame.wgsl`): 1 as designed. -/
+  function's (`shaders/frame.wgsl`): 1 as designed. The sand waves and
+  hummocks on it are not scaled with it. -/
   amplitude : Float := 1
   deriving Repr, Inhabited
 
 /-- How far above and below 0 the floor may reach, for culling: the
-height's octaves' amplitudes summed, and some. -/
-def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude
+height's octaves' amplitudes summed, and some; the sand waves' and
+hummocks' are not scaled by the amplitude. -/
+def Floor.relief (f : Floor) : Float := 1.7 * f.amplitude + 0.2
 
 /-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
 stays the width it is; its cells get finer. -/
@@ -117,10 +120,16 @@ structure Ripples where
   /-- The small ripples' height, riding on the ripples, as a fraction of
   theirs: 0 none. -/
   fine       : Float := 0.08
-  /-- The scour pits: how many a wavelength's square, 0 none to 1 one
-  each; and how deep, as a fraction of the ripples' height. -/
-  pits       : Float := 0.3
-  pitDepth   : Float := 0.5
+  /-- The scour pits: how many a wavelength's square where they run, 0
+  none to 1 one each; and how deep at most, as a fraction of the ripples'
+  height. -/
+  pits       : Float := 0.35
+  pitDepth   : Float := 0.4
+  /-- The slip faces: sand carried over a crest comes to rest at its
+  angle of repose, a straight face down the lee, in radians (30 degrees
+  under water); and how much of the field has them, 0 none to 1 all. -/
+  repose     : Float := 0.52
+  slipFaces  : Float := 0.7
   /-- The tile's texels a side: a power of two. -/
   texels     : Nat   := 2048
   /-- Ripples across the tile: even. -/
@@ -138,6 +147,23 @@ structure Ripples where
 /-- The tile's width, in metres. -/
 def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
 
+/-- The wave number, in radians a metre, of a water wave of `period`
+seconds in water `depth` metres deep, by the dispersion relation
+(the frequency squared is gravity times the wave number times the
+hyperbolic tangent of the wave number times the depth), iterated from
+the deep-water wave number. -/
+def waveNumber (period depth : Float) : Float := Id.run do
+  let omega := 2 * 3.14159265 / period
+  let deep := omega * omega / 9.81
+  let mut k := deep
+  for _ in [0:12] do
+    k := deep / (k * depth).tanh
+  return k
+
+/-- The periods of the swell's three waves, as fractions of its own
+(`shaders/frame.wgsl` has the same). -/
+def swellPeriodFractions : Array Float := #[1, 1.21, 0.83, 1.55]
+
 /--
 The sand's grains, as `shaders/sand.wgsl` draws them from the tile
 `Reef/Grains.lean` bakes (`shaders/grains.wgsl`): medium sand, with
@@ -150,11 +176,11 @@ structure Grains where
   /-- The tile's texels a side: a power of two. -/
   texels    : Nat   := 1024
   /-- A grain's diameter, in metres. -/
-  grain     : Float := 0.0004
+  grain     : Float := 0.0005
   /-- A fragment's diameter, in metres, and how many of the fragments'
   cells (a diameter wide) hold one, 0 none to 1 all. -/
-  fragment  : Float := 0.002
-  fragments : Float := 0.08
+  fragment  : Float := 0.003
+  fragments : Float := 0.12
   /-- How much the grains tilt the normal, and speckle the colour: 1 as
   designed, 0 none. -/
   relief    : Float := 1
@@ -167,10 +193,115 @@ ripples' and the pits' on top, as the bake sums them. -/
 def Ripples.height (r : Ripples) : Float :=
   r.steepness * r.wavelength * r.amplitude * (1 + r.fine + r.pitDepth)
 
+/-- The sun, as `shaders/sand.wgsl` lights by it: where it is in the sky.
+Under water the sun is never lower than about 41 degrees up, the surface
+bending even a setting sun that high: 41 is a sun on the horizon. By
+default 55 degrees, a sun 40 degrees up in the air, mid-morning: in the
+sky through the window, and low enough that the ripples' shade shows
+(lower still is allowed, for the look). -/
+structure Sun where
+  /-- Round from the x axis, in radians. -/
+  azimuth   : Float := 0.36
+  /-- Up from the horizon, in radians. -/
+  elevation : Float := 0.96
+  deriving Repr, Inhabited
+
+/-- The direction the sun's light comes from: unit, up. -/
+def Sun.direction (s : Sun) : Vec3 :=
+  ⟨s.elevation.cos * s.azimuth.cos, s.elevation.sin, s.elevation.cos * s.azimuth.sin⟩
+
+/--
+The water, as `shaders/frame.wgsl` colours by it: a warm tropical reef's
+as an animated film paints it, clear, the water a deep gradient from a
+bright cerulean toward the surface through turquoise level to a cobalt
+blue far and below, the sun's light warm and the sky's a cool blue, so
+that the sand is cream in the sun and blue in its shade. Colours are
+linear. The water takes each colour at its own rate with distance, red
+first; what it scatters in along the way is its own colour, by the
+direction looked in.
+-/
+structure Water where
+  /-- The surface's height above the floor's zero, in metres. -/
+  depth      : Float := 4
+  /-- How fast the water takes red, green and blue, per metre. -/
+  extinction : Vec3  := ⟨0.1, 0.045, 0.025⟩
+  /-- Its colour seen level, far off; up, toward the surface; down: a deep
+  saturated teal, dark against the sand, as a photograph exposed for the
+  sand has it. -/
+  horizon    : Vec3  := ⟨0.0, 0.1, 0.23⟩
+  zenith     : Vec3  := ⟨0.04, 0.3, 0.55⟩
+  deep       : Vec3  := ⟨0.0, 0.03, 0.14⟩
+  /-- The sun's light at the floor, warm, and the sky's from all above,
+  dim and blue. -/
+  sunlight   : Vec3  := ⟨1.7, 1.4, 1.0⟩
+  skylight   : Vec3  := ⟨0.08, 0.17, 0.3⟩
+  /-- The caustics' strength, 0 none to 1 as the surface makes them; and
+  their fringes of colour, how far the water's index for red and for blue
+  lie either side of green's: 0.006 in truth (1.331 at 656 nm, 1.343 at
+  486 nm, about 1.333 at 550), 0 no fringes. -/
+  focus      : Float := 1
+  dispersion : Float := 0.006
+  /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,
+  in metres, repeating; the wind that makes its waves, in metres a second
+  (a breeze of four by default; whitecaps from about seven), and its
+  direction, in radians from the x axis; how high the chop is at a wind
+  of four, a factor, growing with the wind's square; the shortest wave
+  kept, in metres. -/
+  tile          : Float := 8
+  wind          : Float := 4.0
+  windDirection : Float := 0.5
+  amplitude     : Float := 0.0006
+  shortest      : Float := 0.12
+  /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
+  and its moments, baked as the layers of a texture this many texels a
+  side; the grid of the surface drawn into each, quads a side, and its
+  margin beyond the tile, in metres. -/
+  loop          : Float := 3
+  frames        : Nat   := 72
+  texels        : Nat   := 512
+  grid          : Nat   := 512
+  margin        : Float := 0.6
+  /-- The surface as drawn from below (`shaders/surface.wgsl`): its grid,
+  cells a side, and how far from the camera it reaches, in metres. -/
+  surfaceGrid   : Nat   := 192
+  surfaceReach  : Float := 400
+  /-- The light in the water (`shaders/shafts.wgsl`): the sun's light
+  scattered toward the camera by what the water holds, in shafts under
+  the surface's bright filaments: its strength, 0 none; the steps a pixel
+  marches its ray; and how far, in metres. -/
+  shafts        : Float := 0.6
+  shaftSteps    : Nat   := 12
+  shaftReach    : Float := 30
+  /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
+  before the filmic curve. -/
+  exposure      : Float := 0.6
+  /-- The swell (`shaders/frame.wgsl`): the long waves under the chop, a
+  heave of the surface that passes overhead. Its height, trough to crest,
+  in metres; its period, in seconds, which with the depth fixes its
+  length (`waveNumber`): the ocean's swell, 8 to 14 seconds, is 60 m long
+  here and felt rather than seen, a lagoon's wind sea of three or four
+  seconds is 15 to 20 m and seen; how far its waves' headings spread
+  about the ripples', in radians. -/
+  swellHeight   : Float := 0.5
+  swellPeriod   : Float := 3.5
+  swellSpread   : Float := 0.25
+  deriving Repr, Inhabited
+
+/-- How much rougher the sea is than at a breeze of four metres a second:
+the wind's square over that wind's. -/
+def Water.rougher (w : Water) : Float := (w.wind / 4) * (w.wind / 4)
+
+/-- The chop's amplitude at this wind. -/
+def Water.chopAmplitude (w : Water) : Float := w.amplitude * w.rougher
+
+/-- The swell's height at this wind: the design's, growing with the
+wind's square too (a wind sea, which the swell here is). -/
+def Water.swellAtWind (w : Water) : Float := w.swellHeight * w.rougher
+
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
   /-- Every mesh's edges, as lines over it. -/
-  wireframe : Bool := true
+  wireframe : Bool := false
   /-- The grid, a line a metre at the floor's height. -/
   grid      : Bool := false
   deriving Repr, Inhabited
@@ -191,6 +322,8 @@ structure App where
   floor    : Floor         := {}
   ripples  : Ripples       := {}
   grains   : Grains        := {}
+  sun      : Sun           := {}
+  water    : Water         := {}
   detail   : Float         := 1
   overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button
@@ -230,6 +363,11 @@ def dollyPerPixel : Float := 0.01
 /-- Metres a second the keys move; with Shift, times this again. -/
 def moveSpeed : Float := 4
 def moveFast : Float := 4
+
+/-- Radians the sun swings round, and rises or sets, a key press: 10 and
+5 degrees. -/
+def sunSwing : Float := 0.1745
+def sunLift : Float := 0.0873
 
 /-- The code of the key `c` names. -/
 def keyOf (c : Char) : UInt32 := c.toNat.toUInt32
@@ -298,6 +436,14 @@ def update (event : Event) (a : App) : App × List Command :=
       ({ a with detail := max 0.25 (a.detail / 2) }, [.remesh])
     else if code == keyOf ']' then
       ({ a with detail := min 4 (a.detail * 2) }, [.remesh])
+    else if code == keyOf ',' then
+      ({ a with sun.azimuth := a.sun.azimuth - sunSwing }, [])
+    else if code == keyOf '.' then
+      ({ a with sun.azimuth := a.sun.azimuth + sunSwing }, [])
+    else if code == keyOf '-' then
+      ({ a with sun.elevation := max 0.09 (a.sun.elevation - sunLift) }, [])
+    else if code == keyOf '=' then
+      ({ a with sun.elevation := min 1.57 (a.sun.elevation + sunLift) }, [])
     else (a, [])
 
 /-- The state `dt` seconds on: the camera moved by the keys held. -/

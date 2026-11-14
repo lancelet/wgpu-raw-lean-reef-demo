@@ -31,6 +31,10 @@ def textSize (height : UInt32) : UInt32 := max 16 (height / 54)
 /-- The longest a frame counts as, in seconds: after a pause, no leap. -/
 def longestStep : Float := 0.1
 
+/-- Frames drawn before a screenshot's, at sixty a second, for what
+evolves: three seconds. -/
+def warmFrames : Nat := 180
+
 /-- A screenshot's texture format: as a surface's, sRGB. -/
 def screenshotFormat : TextureFormat := .rgba8UnormSrgb
 
@@ -77,7 +81,15 @@ def Options.initial (o : Options) (width height : UInt32) : App :=
   let overlays : Overlays := {}
   let floor : Floor := {}
   let ripples : Ripples := {}
+  let sun : Sun := {}
+  let water : Water := {}
   { width, height, camera := o.camera'
+    sun      := match o.sun with
+      | some (azimuth, elevation) =>
+        { azimuth := azimuth * 0.0174533, elevation := elevation * 0.0174533 }
+      | none => sun
+    water    := { water with wind  := o.wind.getD water.wind
+                             depth := o.depth.getD water.depth }
     overlays := { wireframe := o.wireframe.getD overlays.wireframe
                   grid      := o.grid.getD overlays.grid }
     floor    := { floor with amplitude := o.relief.getD floor.amplitude }
@@ -100,6 +112,7 @@ def describe (a : App) : String :=
   let degrees (r : Float) : String := signed (r * 57.2958) 0
   s!"camera {signed c.position.x 1}, {signed c.position.y 1}, \
     {signed c.position.z 1}  yaw {degrees c.yaw} pitch {degrees c.pitch}  \
+    sun {degrees a.sun.azimuth},{degrees a.sun.elevation}  \
     detail {signed a.detail 2}"
 
 /-- A PPM image (binary, `P6`) of `width` by `height` pixels, from their
@@ -111,6 +124,54 @@ def ppm (width height row : Nat) (pixels : ByteArray) : ByteArray := Id.run do
       let i := y * row + x * 4
       out := out.push pixels[i]! |>.push pixels[i + 1]! |>.push pixels[i + 2]!
   return out
+
+/-- `buffer`'s first `size` bytes, read back. -/
+def readbackBuffer (wgpu : Instance) (device : Device) (buffer : Buffer)
+    (size : UInt64) : IO ByteArray := do
+  let some copy ← device.createBuffer
+      { label := "readback", size, usage := .mapRead ||| .copyDst }
+    | throw (IO.userError "no buffer to read the buffer back into")
+  let encoder ← device.createCommandEncoder none
+  encoder.copyBufferToBuffer buffer 0 copy 0 size
+  (← device.getQueue).submit #[← encoder.finish none]
+  let status ← IO.mkRef none
+  let _ ← copy.mapAsync .read 0 size .allowProcessEvents fun s _ =>
+    status.set (some (s matches .ok .success))
+  for _ in [0:5000] do
+    if (← status.get).isSome then break
+    wgpu.processEvents
+    IO.sleep 1
+  unless (← status.get) == some true do
+    throw (IO.userError "the buffer was not read back")
+  copy.readMapped 0 size
+
+/-- The 32-bit float at byte `i` of `bytes`. -/
+def floatAt (bytes : ByteArray) (i : Nat) : Float :=
+  (Float32.ofBits (bytes[i]!.toUInt32 ||| (bytes[i + 1]!.toUInt32 <<< 8)
+    ||| (bytes[i + 2]!.toUInt32 <<< 16) ||| (bytes[i + 3]!.toUInt32 <<< 24))).toFloat
+
+/--
+Say what sea the surface is, from its last moment baked: the waves'
+height, as the significant wave height (four times the root mean square
+of the surface), the root mean square of its slope, and the steepest.
+-/
+def describeSea (wgpu : Instance) (device : Device) (c : Caustics) : IO Unit := do
+  let count := c.points * c.points
+  let bytes ← readbackBuffer wgpu device c.field (count * 16).toUInt64
+  let mut h2 := 0.0
+  let mut s2 := 0.0
+  let mut steepest := 0.0
+  for i in [0:count] do
+    let h := floatAt bytes (i * 16)
+    let sx := floatAt bytes (i * 16 + 4)
+    let sz := floatAt bytes (i * 16 + 8)
+    h2 := h2 + h * h
+    s2 := s2 + sx * sx + sz * sz
+    steepest := max steepest (sx * sx + sz * sz)
+  let n := count.toFloat
+  IO.println s!"The sea: waves {fixed (4 * (h2 / n).sqrt * 100) 0} cm high \
+    (significant), slope {fixed (s2 / n).sqrt 3} rms, \
+    {fixed steepest.sqrt 2} at steepest."
 
 /--
 The pixels of `texture`, `width` by `height`, four bytes each, read back:
@@ -155,9 +216,13 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     size   := { width, height }
     format := screenshotFormat
   }
-  -- Twice: the overlay too, with the camera's line and the patches the
-  -- first frame drew, how the text looks.
-  renderer.draw app texture
+  -- Some seconds of frames first, for what evolves (the caustics' loop
+  -- and the swell are at the moment): then the overlay
+  -- too, with the camera's line and the patches drawn, how the text
+  -- looks.
+  for i in [0:warmFrames] do
+    renderer.draw { app with time := app.time + i.toFloat / 60 } texture
+  let app := { app with time := app.time + warmFrames.toFloat / 60 }
   renderer.overlay.show s!"{describe app}  patches {← renderer.drawn.get}"
     (textSize height)
   renderer.draw app texture
@@ -191,18 +256,27 @@ def dumpTile (wgpu : Instance) (device : Device) (tile : Tile)
 
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)
-    (device : Device) : IO Unit := do
-  let window ← options.window 960 540
+    (device : Device) (timestamps : Bool) : IO Unit := do
+  let (w, h) := options.size.getD (960, 540)
+  let window ← options.window w.toUInt32 h.toUInt32
   if options.screenshot.isSome || options.tile.isSome
-      || options.grainTile.isSome then
+      || options.grainTile.isSome || options.causticTile.isSome then
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
-      app.ripples app.grains
+      app.ripples app.grains app.water
     if let some path := options.tile then
       dumpTile wgpu device renderer.ripples app.ripples.texels path
+      let stem := (path.splitOn ".").dropLast
+      let horizonsPath := if stem.isEmpty then path ++ "-horizons"
+        else String.intercalate "." stem ++ "-horizons." ++ (path.splitOn ".").getLast!
+      dumpTile wgpu device renderer.horizons app.ripples.texels horizonsPath
     if let some path := options.grainTile then
       dumpTile wgpu device renderer.grains app.grains.texels path
+    if let some path := options.causticTile then
+      dumpTile wgpu device { renderer.caustics with sampler := renderer.grains.sampler
+                             : Tile } app.water.texels path
+      describeSea wgpu device renderer.caustics
     if let some path := options.screenshot then
       screenshot wgpu device renderer app path
     return
@@ -216,7 +290,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
-    initial.ripples initial.grains
+    initial.ripples initial.grains initial.water timestamps
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
@@ -262,6 +336,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     | some status =>
       throw (IO.userError s!"no texture to draw in: {repr status}")
     let (next, text) := (← stats.get).frame (← IO.monoNanosNow) (← busy.get)
+      passes (← renderer.gpuTimes)
     stats.set next
     if let some text := text then summary.set text
     let shown ← app.get
@@ -270,7 +345,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       (textSize shown.height)
     let n ← drawn.get
     if options.frames == some n then
-      IO.println s!"Drew {n} frames."
+      IO.println s!"Drew {n} frames.\n{← summary.get}"
     return options.frames.all (n < ·)
 
 end Reef
@@ -278,8 +353,9 @@ end Reef
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
-[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]
-[--grain-tile FILE]`. -/
+[--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR]
+[--waves DEGREES] [--wind SPEED] [--depth METRES] [--tile FILE]
+[--grain-tile FILE] [--caustic-tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

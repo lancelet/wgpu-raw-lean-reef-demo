@@ -38,15 +38,21 @@ It fills the screen; F leaves it, or fills it again, and Escape ends it.
 `reef --screenshot FILE` draws one frame into that file, a PPM image, and
 ends (with `--headless`, with no display at all); `reef --camera
 X,Y,Z,YAW,PITCH` starts the camera there (metres, and degrees), as a
-screenshot from a chosen view needs; `--wireframe on|off` and `--grid
+screenshot from a chosen view needs; `--sun AZIMUTH,ELEVATION` puts the
+sun there (degrees round from the x axis, and up); `--size WIDTHxHEIGHT` sets the window's size (for timing at the screen's); `--wireframe on|off` and `--grid
 on|off` say whether those show at the start; `--relief FACTOR` and
 `--ripples FACTOR` scale the floor's elevation and its ripples' height,
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
-across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
+across; `--wind SPEED` (metres a second) and `--depth METRES` set the
+sea that makes the caustics, and the water's depth; `--tile FILE` writes
+the ripples' tile as baked, a PPM image of
 its height and slopes (and its cavity, to a `-cavity` file beside it),
 for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
-normal, and brightness). How fast it draws, and where the camera is, are
-in the bottom right.
+normal, and brightness), and `--caustic-tile FILE` the caustics' first
+moment, saying what sea the surface came to (its waves' height and
+slope). How fast it draws, on the CPU and (where the
+device can stamp time) on the GPU, and where the camera is, are in the
+bottom right; `reef --frames N` prints the last of that as it ends.
 
 The camera is driven as a modelling program's viewport, with no modes: two
 fingers on a trackpad (or the wheel) orbit the point it looks at; with
@@ -54,7 +60,8 @@ Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
 Alt, turn in place. The main mouse button, dragged, does the same four.
 W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
 hurries. Home puts the camera back where it started. 1 shows the
-wireframe, or hides it, and 2 the grid; `[` and `]` halve and double the
+wireframe, or hides it, and 2 the grid; `,` and `.` swing the sun round
+and `-` and `=` lower and raise it; `[` and `]` halve and double the
 detail, how finely every mesh is made, for the hardware at hand.
 
 [elan]: https://github.com/leanprover/elan
@@ -116,10 +123,16 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
   start from phasor noise.
 - `Reef/Grains.lean`: the sand's grains, a tile of a few centimetres,
   baked likewise.
+- `Reef/Caustics.lean`: the sun's light through the sea's surface, baked
+  at the start as a loop of moments: the surface by a fast Fourier
+  transform in compute (`shaders/ocean.wgsl`), drawn down the sun's rays
+  (`shaders/caustics.wgsl`); and the same surface evolved each frame, for
+  `shaders/surface.wgsl`, the sea seen from below.
 - `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.
 - `Reef/Stats.lean`: how fast it draws, for the overlay.
+- `Reef/Timing.lean`: the frame's time on the GPU, by timestamps.
 - `Reef/Main.lean`: the program: the shell around the state.
 - `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
   it is embedded in the program, and an edited shader is built in. That file

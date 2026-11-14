@@ -50,6 +50,23 @@ struct Vertex {
 @group(0) @binding(6) var<storage, read_write> counts : array<atomic<u32>, 2>;
 @group(0) @binding(7) var<storage, read_write> indices : array<u32>;
 @group(0) @binding(8) var<storage, read_write> args : array<u32, 5>;
+// The bands' noise (shaders/rock.wgsl): written by `bakeBandNoise`,
+// read by the rest.
+@group(0) @binding(9) var bandsIn : texture_3d<f32>;
+@group(0) @binding(10) var bandsSampler : sampler;
+@group(0) @binding(11) var bandsOut : texture_storage_3d<rgba16float, write>;
+
+fn bandNoise(p : vec3f) -> vec4f {
+  let uvw = (p * f32(bandTexels) + 0.5) / f32(bandPeriod * bandTexels);
+  return textureSampleLevel(bandsIn, bandsSampler, uvw, 0.0);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn bakeBandNoise(@builtin(global_invocation_id) id : vec3u) {
+  let size = u32(bandPeriod * bandTexels);
+  if (any(id >= vec3u(size))) { return; }
+  textureStore(bandsOut, id, bandNoiseExact(vec3f(id) / f32(bandTexels)));
+}
 
 const none = 0xffffffffu;
 

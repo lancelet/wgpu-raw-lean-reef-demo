@@ -40,6 +40,14 @@ struct Lod {
 }
 @group(1) @binding(3) var<uniform> lod : Lod;
 @group(1) @binding(4) var parentField : texture_3d<f32>;
+// The bands' noise (shaders/rock.wgsl), as the bake reads it.
+@group(1) @binding(5) var bandsIn : texture_3d<f32>;
+@group(1) @binding(6) var bandsSampler : sampler;
+
+fn bandNoise(p : vec3f) -> vec4f {
+  let uvw = (p * f32(bandTexels) + 0.5) / f32(bandPeriod * bandTexels);
+  return textureSampleLevel(bandsIn, bandsSampler, uvw, 0.0);
+}
 
 // The parent's distance at `p`, between its field's points.
 fn parentDistance(p : vec3f) -> f32 {

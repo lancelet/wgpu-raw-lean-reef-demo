@@ -177,6 +177,10 @@ structure ReefBaker where
   countLayout  : BindGroupLayout
   drawPipe   : RenderPipeline
   drawLayout : BindGroupLayout
+  /-- The rock's bands' noise (shaders/rock.wgsl), baked once, and its
+  sampler (repeating, filtered). -/
+  bands        : TextureView
+  bandsSampler : Sampler
 
 def ReefBaker.create (device : Device) (shared : String)
     (frameLayout : BindGroupLayout) (format depthFormat : TextureFormat) : IO ReefBaker := do
@@ -204,9 +208,38 @@ def ReefBaker.create (device : Device) (shared : String)
         label := entry, bindGroupLayouts := #[layout] })
       compute := { module, entryPoint := some entry } }
     return (pipeline, layout)
-  let (fieldPipe, fieldLayout) ← pass "field" #[uniformEntry, readEntry 1, fieldWrite]
+  let bandsRead : Array BindGroupLayoutEntry := #[
+    { binding := 9, visibility := .compute,
+      texture := { sampleType := .float, viewDimension := .«3d» } },
+    { binding := 10, visibility := .compute, sampler := { type := .filtering } }]
+  let (fieldPipe, fieldLayout) ← pass "field" (#[uniformEntry, readEntry 1, fieldWrite] ++ bandsRead)
   let (vertexPipe, vertexLayout) ← pass "vertexPass"
-    #[uniformEntry, readEntry 1, fieldRead, writeEntry 4, writeEntry 5, writeEntry 6]
+    (#[uniformEntry, readEntry 1, fieldRead, writeEntry 4, writeEntry 5, writeEntry 6] ++ bandsRead)
+  -- The bands' noise, baked.
+  let texels := (32 * 4 : Nat)
+  let bandsTexture ← device.createTexture {
+    label := "rock bands", dimension := .«3d»
+    usage := .storageBinding ||| .textureBinding
+    size := { width := texels.toUInt32, height := texels.toUInt32, depthOrArrayLayers := texels.toUInt32 }
+    format := .rgba16Float }
+  let bands ← bandsTexture.createView none
+  let bandsSampler ← device.createSampler (some {
+    label := "rock bands", addressModeU := .repeat, addressModeV := .repeat,
+    addressModeW := .repeat, magFilter := .linear, minFilter := .linear })
+  let (bandsPipe, bandsLayout) ← pass "bakeBandNoise"
+    #[{ binding := 11, visibility := .compute
+        storageTexture := { access := .writeOnly, format := .rgba16Float, viewDimension := .«3d» } }]
+  let bandsData ← device.createBindGroup {
+    label := "rock bands", layout := bandsLayout
+    entries := #[{ binding := 11, textureView := some bands }] }
+  let encoder ← device.createCommandEncoder none
+  let c ← encoder.beginComputePass none
+  c.setPipeline bandsPipe
+  c.setBindGroup 0 (some bandsData) #[]
+  let g := (texels / 4).toUInt32
+  c.dispatchWorkgroups g g g
+  c.«end»
+  (← device.getQueue).submit #[← encoder.finish none]
   let (facePipe, faceLayout) ← pass "facePass"
     #[uniformEntry, fieldRead, writeEntry 5, writeEntry 6, writeEntry 7]
   let (countPipe, countLayout) ← pass "countPass"
@@ -220,7 +253,10 @@ def ReefBaker.create (device : Device) (shared : String)
       { binding := 2, visibility := .fragment, sampler := { type := .filtering } },
       { binding := 3, visibility := .vertex ||| .fragment, buffer := { type := .uniform } },
       { binding := 4, visibility := .vertex,
-        texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } }]
+        texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } },
+      { binding := 5, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«3d» } },
+      { binding := 6, visibility := .fragment, sampler := { type := .filtering } }]
   }
   let drawModule ← createShader device "bommies" (shared ++ Shaders.bommie)
   let drawPipe ← device.createRenderPipeline {
@@ -235,7 +271,7 @@ def ReefBaker.create (device : Device) (shared : String)
       format := depthFormat, depthWriteEnabled := .true, depthCompare := .less }
   }
   return { fieldPipe, vertexPipe, facePipe, countPipe, fieldLayout, vertexLayout,
-           faceLayout, countLayout, drawPipe, drawLayout }
+           faceLayout, countLayout, drawPipe, drawLayout, bands, bandsSampler }
 
 /-- A level of the reef's mesh: a grid of the field over a box, its
 cells `cell` wide, `dims` points along each axis; the field, and the mesh
@@ -286,12 +322,16 @@ def ReefLevel.create (device : Device) (baker : ReefBaker) (detail : Tile) (blob
     device.createBindGroup { label, layout, entries }
   let fieldData ← group baker.fieldLayout
     #[{ binding := 0, buffer := some uniform }, { binding := 1, buffer := some blobs },
-      { binding := 2, textureView := some fieldView }]
+      { binding := 2, textureView := some fieldView },
+      { binding := 9, textureView := some baker.bands },
+      { binding := 10, sampler := some baker.bandsSampler }]
   let vertexData ← group baker.vertexLayout
     #[{ binding := 0, buffer := some uniform }, { binding := 1, buffer := some blobs },
       { binding := 3, textureView := some fieldView },
       { binding := 4, buffer := some vertices }, { binding := 5, buffer := some cellIndex },
-      { binding := 6, buffer := some counts }]
+      { binding := 6, buffer := some counts },
+      { binding := 9, textureView := some baker.bands },
+      { binding := 10, sampler := some baker.bandsSampler }]
   let faceData ← group baker.faceLayout
     #[{ binding := 0, buffer := some uniform }, { binding := 3, textureView := some fieldView },
       { binding := 5, buffer := some cellIndex }, { binding := 6, buffer := some counts },
@@ -306,7 +346,9 @@ def ReefLevel.create (device : Device) (baker : ReefBaker) (detail : Tile) (blob
       { binding := 1, textureView := some detail.view },
       { binding := 2, sampler := some detail.sampler },
       { binding := 3, buffer := some lod },
-      { binding := 4, textureView := some parent }]
+      { binding := 4, textureView := some parent },
+      { binding := 5, textureView := some baker.bands },
+      { binding := 6, sampler := some baker.bandsSampler }]
   return { origin := ← IO.mkRef origin, cell, dims, maxVertices, maxIndices, uniform,
            field, fieldView, vertices, indices, counts, args, lod,
            fieldData, vertexData, faceData, countData, drawData }

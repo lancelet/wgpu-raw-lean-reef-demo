@@ -107,11 +107,52 @@ fn bandFrequency(i : i32) -> f32 {
   return 4.6 * exp2(f32(i));
 }
 
+// The bands' noise: value noise with its gradient, repeating every
+// `bandPeriod` of its features, baked into a 3D texture (`bakeBandNoise`,
+// shaders/reefbake.wgsl) with `bandTexels` texels to a feature, which
+// the bake and the draw both read (`bandNoise`, each with its own
+// binding): one filtered read a band, not eight hashes.
+const bandPeriod = 32;
+const bandTexels = 4;
+
+fn rockHashWrapped(p : vec3i) -> f32 {
+  return rockHash(((p % bandPeriod) + bandPeriod) % bandPeriod);
+}
+
+// The bands' noise at `p`, as baked: value, gradient.
+fn bandNoiseExact(p : vec3f) -> vec4f {
+  let i = vec3i(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let du = 6.0 * f * (1.0 - f);
+  let a = rockHashWrapped(i);
+  let b = rockHashWrapped(i + vec3i(1, 0, 0));
+  let c = rockHashWrapped(i + vec3i(0, 1, 0));
+  let d = rockHashWrapped(i + vec3i(1, 1, 0));
+  let e = rockHashWrapped(i + vec3i(0, 0, 1));
+  let g = rockHashWrapped(i + vec3i(1, 0, 1));
+  let h = rockHashWrapped(i + vec3i(0, 1, 1));
+  let k = rockHashWrapped(i + vec3i(1, 1, 1));
+  let k1 = b - a;
+  let k2 = c - a;
+  let k3 = e - a;
+  let k4 = a - b - c + d;
+  let k5 = a - c - e + h;
+  let k6 = a - b - e + g;
+  let k7 = -a + b + c - d + e - g - h + k;
+  let value = a + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z
+    + k6 * u.z * u.x + k7 * u.x * u.y * u.z;
+  let grad = du * vec3f(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+                        k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
+                        k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y);
+  return vec4f(value * 2.0 - 1.0, grad * 2.0);
+}
+
 // Band `i` at `p`: its height, and its gradient.
 fn rockBand(p : vec3f, i : i32) -> vec4f {
   let f = bandFrequency(i);
   let amplitude = 0.032 * pow(0.55, f32(i));
-  let n = rockNoiseGrad(p * f + vec3f(7.0, 13.0, 3.0) * f32(i + 1));
+  let n = bandNoise(p * f + vec3f(7.0, 13.0, 3.0) * f32(i + 1));
   if (i < 3) {
     let r = 1.0 - abs(n.x);
     let dr = -sign(n.x) * n.yzw * f;

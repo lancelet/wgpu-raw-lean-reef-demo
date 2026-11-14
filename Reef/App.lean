@@ -272,6 +272,10 @@ structure Water where
   shafts        : Float := 0.6
   shaftSteps    : Nat   := 12
   shaftReach    : Float := 30
+  /-- The marine snow (`Reef/Snow.lean`): how many flecks, and the
+  half-width of the box about the camera they are kept in, in metres. -/
+  snow          : Nat   := 24000
+  snowReach     : Float := 6
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
   before the filmic curve. -/
   exposure      : Float := 0.6

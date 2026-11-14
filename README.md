@@ -117,6 +117,8 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Floor.lean`: the floor's mesh, a quadtree of one patch, its nodes
   chosen each frame by their distance from the eye, morphing between
   levels.
+- `Reef/Snow.lean`: the marine snow, flecks drifting in the water, stepped
+  on the GPU and lit by the caustics (`shaders/snow.wgsl`).
 - `Reef/Tile.lean`: what the sand's baked tiles share: a texture with
   its mip levels, and its sampler.
 - `Reef/Ripples.lean`: the sand's ripples, one tile of them baked at the

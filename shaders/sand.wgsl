@@ -261,7 +261,11 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // meets the surface, so that they drift down the sun's slant).
   let cavity = mix(1.0, tile.a, frame.tiling.w);
   let toSurface = (frame.water.x - world.y) / max(sun.y, 0.1);
-  let onSurface = world.xz + sun.xz * toSurface;
+  // Where the sun's ray through this point meets the surface, and where
+  // the swell has carried the chop there from: the caustics slide with
+  // each wave.
+  var onSurface = world.xz + sun.xz * toSurface;
+  onSurface -= swellDriftAt(onSurface, frame.screen.z);
   // The caustics' loop at this moment: the layer, and the next, blended;
   // blurred at least by the sun's own width, half a degree of sky, over
   // the water the light has come down through.

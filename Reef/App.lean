@@ -231,7 +231,7 @@ structure Water where
   tile          : Float := 8
   wind          : Float := 4.0
   windDirection : Float := 0.5
-  amplitude     : Float := 0.0008
+  amplitude     : Float := 0.00045
   shortest      : Float := 0.12
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
@@ -258,10 +258,11 @@ structure Water where
   exposure      : Float := 0.7
   /-- The swell (`shaders/frame.wgsl`): what is left of the ocean's long
   waves over the reef's crest, a slow heave of the surface: its height,
-  trough to crest, in metres (10 to 30 cm in a lagoon); its period, in
+  trough to crest, in metres (10 to 40 cm in a lagoon, over half a
+  metre at the back reef's edge on a lively day); its period, in
   seconds (8 to 14 off the ocean); how far its waves' headings spread
   about the ripples', in radians. -/
-  swellHeight   : Float := 0.22
+  swellHeight   : Float := 0.7
   swellPeriod   : Float := 10
   swellSpread   : Float := 0.25
   deriving Repr, Inhabited

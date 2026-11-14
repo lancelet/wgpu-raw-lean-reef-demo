@@ -113,9 +113,28 @@ fn surgeAt(xz : vec2f, t : f32) -> vec2f {
     let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
                         dir.x * sin(angle) + dir.y * cos(angle));
     let omega = tau / (frame.swell.y * swellPeriods[i]);
-    surge += w.x * omega / (w.y * depth) * cos(w.z) * heading;
+    surge += w.x * omega / (w.y * depth) * sin(w.z) * heading;
   }
   return surge;
+}
+
+// How far the swell has carried the surface's water sideways at `xz`,
+// at time `t`, in metres: the surge's sway, summed, which in shallow
+// water is the wave's amplitude over its wave number times the depth,
+// half a metre for a lagoon's swell. The chop rides on the water, so
+// its caustics slide back and forth on the floor with each wave.
+fn swellDriftAt(xz : vec2f, t : f32) -> vec2f {
+  var drift = vec2f(0.0);
+  let depth = frame.water.x;
+  let dir = frame.ripple.xy;
+  for (var i = 0; i < 3; i++) {
+    let w = swellWave(i, xz, t);
+    let angle = frame.swell.z * swellHeadings[i];
+    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+                        dir.x * sin(angle) + dir.y * cos(angle));
+    drift += w.x / (w.y * depth) * cos(w.z) * heading;
+  }
+  return drift;
 }
 
 // The sea's surface at `xz`, in the world, between the grid's points,

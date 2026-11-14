@@ -13,7 +13,9 @@ Windows) and in a browser: [see it in yours][pages] (it needs WebGPU).
 
 It is also an example of a package that uses the raw WebGPU bindings,
 [webgpu-raw-lean][bindings], and builds both ways. So far it draws the
-ocean, with light from above, and glowing creatures drifting in it.
+floor the reef will stand on, flat sand as a quadtree of patches chosen by
+their distance from the eye, with a grid and a wireframe to see it by, and
+a camera to look at it with.
 
 [bindings]: https://github.com/lancelet/webgpu-raw-lean
 
@@ -32,8 +34,28 @@ Linux and macOS, and the web build's tools too. Then:
 
 It fills the screen; F leaves it, or fills it again, and Escape ends it.
 `reef --windowed` draws in a window instead; `reef --frames N` ends after
-`N` frames; `reef --headless` draws with no display (macOS only). How fast
-it draws is in the bottom right.
+`N` frames; `reef --headless` draws with no display (macOS only);
+`reef --screenshot FILE` draws one frame into that file, a PPM image, and
+ends (with `--headless`, with no display at all); `reef --camera
+X,Y,Z,YAW,PITCH` starts the camera there (metres, and degrees), as a
+screenshot from a chosen view needs; `--wireframe on|off` and `--grid
+on|off` say whether those show at the start; `--relief FACTOR` and
+`--ripples FACTOR` scale the floor's elevation and its ripples' height,
+1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
+across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
+its height and slopes (and its cavity, to a `-cavity` file beside it),
+for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
+normal, and brightness). How fast it draws, and where the camera is, are
+in the bottom right.
+
+The camera is driven as a modelling program's viewport, with no modes: two
+fingers on a trackpad (or the wheel) orbit the point it looks at; with
+Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
+Alt, turn in place. The main mouse button, dragged, does the same four.
+W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
+hurries. Home puts the camera back where it started. 1 shows the
+wireframe, or hides it, and 2 the grid; `[` and `]` halve and double the
+detail, how finely every mesh is made, for the hardware at hand.
 
 [elan]: https://github.com/leanprover/elan
 [Nix]: https://nixos.org
@@ -80,15 +102,32 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 
 - `Reef/Platform.lean`: the options, and the window.
 - `Reef/Gpu.lean`: requesting a device; buffers and shader modules.
-- `Reef/Scene.lean`: what is drawn, as the shaders read it.
-- `Reef/Render.lean`: the pipelines, and drawing a frame.
+- `Reef/Math.lean`: vectors, and the camera's matrices.
+- `Reef/Camera.lean`: the camera, orbited, moved and turned.
+- `Reef/App.lean`: the state, and the pure functions that change it, on an
+  event and once a frame. What they cannot do themselves they ask the
+  program for.
+- `Reef/Floor.lean`: the floor's mesh, a quadtree of one patch, its nodes
+  chosen each frame by their distance from the eye, morphing between
+  levels.
+- `Reef/Tile.lean`: what the sand's baked tiles share: a texture with
+  its mip levels, and its sampler.
+- `Reef/Ripples.lean`: the sand's ripples, one tile of them baked at the
+  start from phasor noise.
+- `Reef/Grains.lean`: the sand's grains, a tile of a few centimetres,
+  baked likewise.
+- `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
+  which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.
 - `Reef/Stats.lean`: how fast it draws, for the overlay.
-- `Reef/Main.lean`: the program.
+- `Reef/Main.lean`: the program: the shell around the state.
 - `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
   it is embedded in the program, and an edited shader is built in. That file
   is committed too, as `lake build Reef` (which the web build runs) looks
   for it before writing it; CI checks it is current.
+- `fonts/`: the overlay's font, JetBrains Mono (under the SIL Open Font
+  License, `fonts/OFL.txt`), which the build writes into `Reef/Fonts.lean`,
+  in base64, committed likewise.
 - `web/index.html`: the page.
 
 ## License

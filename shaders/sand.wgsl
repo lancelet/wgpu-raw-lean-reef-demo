@@ -91,7 +91,13 @@ fn morph(dist : f32, level : f32) -> f32 {
   for (var k = 0u; k < 4u; k++) {
     // The distance from where the vertex is after the levels below: a
     // vertex moved onto another must go on as that one does.
-    let dist = length(floorAt(node.xy + morphed * step));
+    // From the place's own level, not its height: as much a function of
+    // the place alone as the height was (so a vertex two nodes share
+    // morphs alike in both, and the floor has no crack), at a fraction
+    // of the cost; the height a metre or so at most, the range's error
+    // the same.
+    let place = (node.xy + morphed * step) * frame.eye.z - frame.eye.xy;
+    let dist = length(vec3f(place.x, -frame.camera.y, place.y));
     let s = exp2(f32(k + 1u));
     morphed = morphed - fract(morphed / s) * s * morph(dist, node.w + f32(k));
   }
@@ -237,9 +243,19 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // troughs, not on their crests, which the water sweeps; and in
   // colonies, patches a few ripples across with bare sand between (a
   // field of noise over the world, half a metre a feature).
-  let colonies = smoothstep(0.05, 0.4, noise(world.xz / 0.5 + 77.0));
-  let still = (1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies;
-  let grain = grainsAt(world.xz, footAlong, footAcross, sorted, still);
+  // Past a dozen and a half metres the grains are their mean, and that
+  // is one fetch of the tile's last level, not six of its texels; the two
+  // blended over the three metres before.
+  let mean = textureSampleLevel(grains, rippleSampler, vec2f(0.5), 1,
+                                f32(textureNumLevels(grains) - 1));
+  let far = vec4f(0.0, (mean.y - 0.5) * 2.0, 0.0, mean.w);
+  let farness = smoothstep(12.0, 15.0, dist);
+  var grain = far;
+  if (farness < 1.0) {
+    let colonies = smoothstep(0.05, 0.4, noise(world.xz / 0.5 + 77.0));
+    let still = (1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies;
+    grain = mix(grainsAt(world.xz, footAlong, footAcross, sorted, still), far, farness);
+  }
   let tilt = grain.xyz;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));

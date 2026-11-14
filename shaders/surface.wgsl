@@ -51,10 +51,11 @@ fn spaced(c : f32, radius : f32) -> f32 {
   let cell = nearest * log(radius / nearest) * 2.0 / f32(grid);
   let snapped = floor(frame.camera.xz / cell) * cell;
   let world = snapped + offset;
-  let sea = seaAt(world);
+  let swell = swellAt(world, frame.screen.z);
+  let sea = chopAt(world) + vec3f(swell.height, swell.slope);
   // The swell carries the surface's points sideways in their orbits
   // (Gerstner): the vertex goes where the water at `world` has gone.
-  let carried = world + swellAt(world, frame.screen.z).offset;
+  let carried = world + swell.offset;
   var out : Out;
   out.relative = vec3f(carried.x - frame.camera.x, frame.water.x + sea.x - frame.camera.y,
                        carried.y - frame.camera.z);
@@ -134,8 +135,11 @@ fn sunInAir() -> vec3f {
   // coarse for far out; the vertices' where the sea is finer than the
   // pixel.
   let world = in.relative.xz + frame.camera.xz;
-  let sea = seaAt(world);
-  let ripple = capillaries(world, frame.screen.z, dist);
+  let swell = swellAt(world, frame.screen.z);
+  let sea = chopAt(world) + vec3f(swell.height, swell.slope);
+  // The capillaries only where they show (they fade out by forty metres).
+  var ripple = vec2f(0.0);
+  if (dist < 40.0) { ripple = capillaries(world, frame.screen.z, dist); }
   let fine = normalize(vec3f(-sea.y - ripple.x, 1.0, -sea.z - ripple.y));
   let coarse = normalize(in.normal);
   let n = normalize(mix(fine, coarse, smoothstep(40.0, 120.0, dist)));
@@ -205,7 +209,7 @@ fn sunInAir() -> vec3f {
   let footprint = max(length(fwidth(world)), 0.002);
   var floating = vec2f(0.0);
   if (dist < 40.0) {
-    floating = debrisAt(world, swellAt(world, frame.screen.z).offset, frame.screen.z, footprint);
+    floating = debrisAt(world, swell.offset, frame.screen.z, footprint);
   }
   if (floating.x > 0.0) {
     var tint = vec3f(0.22, 0.28, 0.08);

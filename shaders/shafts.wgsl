@@ -1,7 +1,7 @@
 // The light in the water (`Reef/Render.lean`): the sun's light scattered
 // toward the camera by the fine matter the water holds, brighter in the
 // columns under the surface's bright filaments, so the caustics show as
-// shafts. One triangle over a target half the scene's size, after the
+// shafts. One triangle over a target a quarter the scene's size, after the
 // scene is drawn (added over it, smoothed, by shaders/shaftblend.wgsl),
 // each pixel marching its view ray from the camera to what it sees (the
 // depth buffer says how far), summing at each step the sun's light there,
@@ -41,10 +41,10 @@ fn phase(cosine : f32, g : f32) -> f32 {
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
-  // At half size: the scene's pixel is twice this one.
+  // At a quarter size: the scene's pixel is four times this one.
   let pixel = vec2u(in.position.xy);
-  let scenePixel = pixel * 2u;
-  let ndc = (in.position.xy * 2.0 / frame.screen.xy) * 2.0 - 1.0;
+  let scenePixel = pixel * 4u;
+  let ndc = (in.position.xy * 4.0 / frame.screen.xy) * 2.0 - 1.0;
   let dir = normalize(frame.forward.xyz + frame.right.xyz * (ndc.x * frame.right.w)
                       - frame.up.xyz * (ndc.y * frame.up.w));
   // How far the pixel sees: the depth buffer's, made a distance along

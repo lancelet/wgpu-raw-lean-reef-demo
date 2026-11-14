@@ -73,7 +73,7 @@ fn placed(i : u32) -> Mote {
   m.position = vec3f(xz.x, mix(lowest, highest, rand(seed, 2u)), xz.y);
   let spread = exp((rand(seed, 3u) + rand(seed, 7u) - 1.0) * 2.2);
   let flake = select(1.0, 4.0, rand(seed, 8u) < 0.02);
-  m.radius = 0.0003 * scale * spread * flake;
+  m.radius = 0.0004 * scale * spread * flake;
   m.phase = rand(seed, 4u) * 6.2832;
   m.shell = shell;
   m.tint = rand(seed, 5u);
@@ -88,12 +88,26 @@ fn step(@builtin(global_invocation_id) id : vec3u) {
   if (m.radius <= 0.0) { m = placed(i); }
   let t = pool.time;
   let dt = pool.dt;
-  // The surge, a little less near the floor; a slow sinking; a
-  // wandering, each its own.
-  let surge = surgeAt(m.position.xz, t) * (0.7 + 0.3 * m.position.y / frame.water.x);
-  let wander = vec3f(sin(t * 0.7 + m.phase), sin(t * 0.43 + m.phase * 2.1) * 0.5,
-                     cos(t * 0.61 + m.phase * 1.3)) * 0.004;
-  m.position += (vec3f(surge.x, -0.001, surge.y) + wander) * dt;
+  // The surge, which each fleck follows by its size (the finest wholly,
+  // the larger lagging), slowed in the last quarter metre over the sand
+  // (the bottom's boundary layer); eddies, a slowly turning flow a few
+  // tens of centimetres across, so that neighbours part and the field
+  // shears rather than slides as one; a slow sinking; and a wandering,
+  // each its own, slow and irregular.
+  let p = m.position;
+  let above = p.y - height(p.xz);
+  let boundary = 0.35 + 0.65 * smoothstep(0.0, 0.25, above);
+  let follows = mix(1.0, 0.6, clamp(m.radius / 0.002, 0.0, 1.0));
+  let surge = surgeAt(p.xz, t) * boundary * follows;
+  let q = p / 0.35;
+  let eddy = vec3f(noise(q.yz + vec2f(t * 0.07, 3.1)),
+                   noise(q.xz + vec2f(5.7, t * 0.05)) * 0.5,
+                   noise(q.xy + vec2f(t * 0.06, 9.3))) * 0.035 * boundary;
+  let wander = vec3f(sin(t * 0.31 + m.phase) + 0.5 * sin(t * 0.83 + m.phase * 3.7),
+                     sin(t * 0.23 + m.phase * 2.1) * 0.5,
+                     cos(t * 0.27 + m.phase * 1.3) + 0.5 * cos(t * 0.71 + m.phase * 2.9))
+    * 0.006;
+  m.position += (vec3f(surge.x, -0.001, surge.y) + eddy + wander) * dt;
   // Kept in its shell's box about the camera, wrapping round it; and
   // between the floor's zero and the surface, wrapping too.
   let reach = m.shell;
@@ -136,7 +150,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let size = m.radius + blur;
   // Never under a few pixels, a soft glow rather than a speck; fainter by
   // as much as it is drawn bigger than it is.
-  let least = dist * frame.camera.w * 3.0;
+  let least = dist * frame.camera.w * 3.6;
   let drawn = max(size, least);
   let coverage = (m.radius * m.radius) / (drawn * drawn);
   let world = relative + (frame.right.xyz * corner.x + frame.up.xyz * corner.y) * drawn;

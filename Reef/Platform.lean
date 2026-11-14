@@ -29,6 +29,9 @@ structure Options where
   /-- Whether the wireframe, and the grid, show at the start, if said. -/
   wireframe  : Option Bool := none
   grid       : Option Bool := none
+  /-- The window's size, in pixels, if said: for a screenshot or a timing
+  at the size of the screen. -/
+  size       : Option (Nat × Nat) := none
   /-- Where the sun is, if said: round from the x axis, and up from the
   horizon, in degrees. -/
   sun        : Option (Float × Float) := none
@@ -53,7 +56,7 @@ structure Options where
 def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
     [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
-    [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR] \
+    [--size WIDTHxHEIGHT] [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR] \
     [--waves DEGREES] [--wind SPEED] [--depth METRES] [--tile FILE] \
     [--grain-tile FILE] [--caustic-tile FILE]"
 
@@ -94,6 +97,10 @@ def Options.parse : List String → Except String Options
   | "--depth" :: metres :: rest => do
     let some metres := parseFloat metres | throw s!"not a depth: {metres}"
     return { ← Options.parse rest with depth := some metres }
+  | "--size" :: spec :: rest => do
+    let some [w, h] := (spec.splitOn "x").mapM String.toNat?
+      | throw s!"not a size: {spec} (WIDTHxHEIGHT)"
+    return { ← Options.parse rest with size := some (w, h) }
   | "--sun" :: spec :: rest => do
     let some [azimuth, elevation] := (spec.splitOn ",").mapM parseFloat
       | throw s!"not a sun: {spec} (AZIMUTH,ELEVATION, in degrees)"

@@ -71,6 +71,11 @@ structure Depth where
   height  : UInt32
   scene   : TextureView
   resolve : BindGroup
+  /-- The reflection's target and its depth, half the size, and the
+  surface's bind group that reads the target. -/
+  mirror      : TextureView
+  mirrorDepth : TextureView
+  mirrorData  : BindGroup
 
 /-- What drawing a frame needs, made once. -/
 structure Renderer where
@@ -81,6 +86,14 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
+  /-- The reflection: a mirrored frame's uniforms, its own nodes, the bind
+  group of them, and the surface's layout for the texture it is drawn
+  into. -/
+  mirrorFrame  : Buffer
+  mirrorNodes  : Buffer
+  mirrorData   : BindGroup
+  mirrorLayout : BindGroupLayout
+  mirrorSampler : Sampler
   shafts   : RenderPipeline
   /-- The shafts' second bind group, the scene's depth: made with the
   depth buffer; their target, half the scene's size, made with it too;
@@ -125,6 +138,11 @@ structure Renderer where
   timing   : Option Timing
   /-- Frames drawn, for the timing's ring. -/
   frames   : IO.Ref Nat
+
+/-- How much wider the reflection's view is than the screen's, so that
+the surface's wobble always has picture to pull from (`shaders/surface.wgsl`
+has the same). -/
+def mirrorOverscan : Float := 1.3
 
 /-- The camera's field of view, up and down, in radians: 60 degrees. -/
 def fovY : Float := 1.0472
@@ -177,8 +195,7 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
     ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]
     ++ [w.swellAtWind, w.swellPeriod, w.swellSpread, 0]
-    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList
-    ++ [0]).foldl
+    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -272,7 +289,19 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
-  let surface ← pipeline device "surface" layout surfaceModule sceneFormat
+  let mirrorLayout ← device.createBindGroupLayout {
+    label   := "reflection"
+    entries := #[
+      { binding := 0, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 1, visibility := .fragment, sampler := { type := .filtering } }]
+  }
+  let surfaceLayout ← device.createPipelineLayout {
+    label := "surface", bindGroupLayouts := #[frameLayout, mirrorLayout] }
+  let surface ← pipeline device "surface" surfaceLayout surfaceModule sceneFormat
+  let mirrorSampler ← device.createSampler (some {
+    label := "reflection", addressModeU := .clampToEdge, addressModeV := .clampToEdge,
+    magFilter := .linear, minFilter := .linear })
   -- The shafts: the frame's bind group, and the scene's depth in a second.
   let shaftLayout ← device.createBindGroupLayout {
     label   := "shafts"
@@ -372,8 +401,29 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 7, buffer := some caustics.field }
     ]
   }
+  -- The reflection's: the same, but a mirrored frame and its own nodes.
+  let mirrorFrame ← createBuffer device "reflection frame" .uniform
+    (frameBytes Mat4.identity Camera.initial 1 1 1 1 0 {} floor floor.cells
+      ripples grains {} water)
+  let mirrorNodes ← createBuffer device "reflection nodes" .storage
+    (ByteArray.mk (Array.replicate (maxNodes * 16) 0))
+  let mirrorData ← device.createBindGroup {
+    label   := "reflection"
+    layout  := frameLayout
+    entries := #[
+      { binding := 0, buffer := some mirrorFrame },
+      { binding := 1, buffer := some mirrorNodes },
+      { binding := 2, textureView := some tile.view },
+      { binding := 3, sampler := some tile.sampler },
+      { binding := 4, textureView := some grainTile.view },
+      { binding := 5, textureView := some horizons.view },
+      { binding := 6, textureView := some caustics.view },
+      { binding := 7, buffer := some caustics.field }
+    ]
+  }
   return {
-    device, format, backdrop, surface, surfaceIndices, shafts, shaftLayout, sand,
+    device, format, backdrop, surface, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
+    mirrorSampler, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
     shaftSampler, resolve, resolveLayout
     shaftData      := ← IO.mkRef none
@@ -421,8 +471,23 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
     layout  := r.resolveLayout
     entries := #[{ binding := 0, textureView := some scene }]
   }
+  let halfSize : Extent3D := { width := max 1 (width / 8), height := max 1 (height / 8) }
+  let mirrorTexture ← r.device.createTexture {
+    label := "reflection", usage := .renderAttachment ||| .textureBinding
+    size := halfSize, format := sceneFormat }
+  let mirrorDepthTexture ← r.device.createTexture {
+    label := "reflection depth", usage := .renderAttachment
+    size := halfSize, format := depthFormat }
+  let mirror ← mirrorTexture.createView none
+  let mirrorData ← r.device.createBindGroup {
+    label   := "reflection"
+    layout  := r.mirrorLayout
+    entries := #[{ binding := 0, textureView := some mirror },
+                 { binding := 1, sampler := some r.mirrorSampler }]
+  }
   let d : Depth := { texture, view := ← texture.createView none, width, height,
-                     scene, resolve }
+                     scene, resolve, mirror, mirrorData
+                     mirrorDepth := ← mirrorDepthTexture.createView none }
   r.depth.set (some d)
   -- The shafts read it: their bind group made for it; and their target,
   -- half its size, with the bind group that reads that.
@@ -485,6 +550,23 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     (Node.bytes nodes eye (app.floor.leaf / floor.cells.toFloat))
   r.drawn.set nodes.size
   let count := nodes.size.toUInt32
+  -- The reflection: the camera's mirror image in the surface, looking as
+  -- the camera looks but mirrored in the vertical, drawn at half size:
+  -- a point drawn there lands on the screen where the surface shows it.
+  let surfaceY := app.water.depth
+  let mirrorEye : Vec3 := ⟨eye.x, 2 * surfaceY - eye.y, eye.z⟩
+  let flip : Mat4 := ⟨#[1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]⟩
+  let tanMirror := (fovY / 2).tan * mirrorOverscan
+  let mirrorViewProj := Mat4.perspective (2 * Float.atan tanMirror) aspect near far
+    * Mat4.view Vec3.zero app.camera.right app.camera.up (-app.camera.forward) * flip
+  let mirrorCamera := { app.camera with position := mirrorEye, pitch := -app.camera.pitch }
+  r.queue.writeBuffer r.mirrorFrame 0
+    (frameBytes mirrorViewProj mirrorCamera tanMirror aspect
+      (app.width / 8).toFloat (app.height / 8).toFloat app.time app.grid app.floor
+      floor.cells app.ripples app.grains app.sun app.water)
+  let mirrorNodes := app.floor.quadtree.select mirrorEye (Frustum.ofMatrix mirrorViewProj)
+  r.queue.writeBuffer r.mirrorNodes 0
+    (Node.bytes mirrorNodes mirrorEye (app.floor.leaf / floor.cells.toFloat))
   let view ← texture.createView (some { format := r.format })
   let depth ← r.depthFor app.width app.height
   let encoder ← r.device.createCommandEncoder none
@@ -493,6 +575,18 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   -- caustics' loop is at.
   let loop := app.water.loop
   r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
+  -- The reflection, first: the sand as the surface mirrors it.
+  let pass ← encoder.beginRenderPass {
+    colorAttachments := #[{ view := some depth.mirror, loadOp := .clear,
+                            storeOp := .store, clearValue := { r := 0, g := 0, b := 0, a := 0 } }]
+    depthStencilAttachment := some {
+      view := depth.mirrorDepth, depthLoadOp := .clear, depthStoreOp := .discard
+      depthClearValue := some 1 }
+  }
+  pass.setBindGroup 0 (some r.mirrorData) #[]
+  pass.setPipeline r.sand
+  r.drawFloor pass mirrorNodes.size.toUInt32 (wire := false)
+  pass.«end»
   -- The scene, in light: the water behind, the sand, the surface; its
   -- depth kept.
   let pass ← encoder.beginRenderPass {
@@ -516,6 +610,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)
   pass.setPipeline r.surface
+  pass.setBindGroup 1 (some depth.mirrorData) #[]
   pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)
   pass.drawIndexed r.surfaceCount 1 0 0 0
   pass.«end»

@@ -39,7 +39,7 @@ It fills the screen; F leaves it, or fills it again, and Escape ends it.
 ends (with `--headless`, with no display at all); `reef --camera
 X,Y,Z,YAW,PITCH` starts the camera there (metres, and degrees), as a
 screenshot from a chosen view needs; `--sun AZIMUTH,ELEVATION` puts the
-sun there (degrees round from the x axis, and up); `--wireframe on|off` and `--grid
+sun there (degrees round from the x axis, and up); `--size WIDTHxHEIGHT` sets the window's size (for timing at the screen's); `--wireframe on|off` and `--grid
 on|off` say whether those show at the start; `--relief FACTOR` and
 `--ripples FACTOR` scale the floor's elevation and its ripples' height,
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie

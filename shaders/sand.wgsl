@@ -288,10 +288,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
-  // Where there is foam above, the sun's light is scattered before it
-  // reaches the floor: a soft shadow under each patch.
-  let foamAbove = foamAt(onSurface + swellDriftAt(onSurface, frame.screen.z), frame.screen.z);
-  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * (1.0 - 0.7 * foamAbove);
+  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z;
   let light = frame.skylight.rgb * cavity
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;

@@ -151,12 +151,6 @@ fn sunInAir() -> vec3f {
   // in it, brighter the steeper the ray goes down.
   let floorSeen = select(vec3f(0.0), fogged(sandLit, mirrored * toFloor * 2.5), toFloor < 1e8);
   let below = water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0);
-  var colour = through + below * reflectance;
-  // The foam, from below: white, lit by the sky through it, and taking
-  // the window's place where it lies; the water's own light on its
-  // underside.
-  let foam = foamAt(world, frame.screen.z);
-  let foamColour = vec3f(0.9, 0.95, 1.0) * (0.55 + 0.45 * max(frame.sun.y, 0.0));
-  colour = mix(colour, foamColour, foam * 0.85);
+  let colour = through + below * reflectance;
   return vec4f(fogged(colour, in.relative), 1.0);
 }

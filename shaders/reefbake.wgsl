@@ -26,7 +26,10 @@ struct Bake {
   dims      : vec3u,  // the grid's points along x, y, z
   blobCount : u32,
   sun       : vec3f,  // where the sun's light comes from, under the water
-  pad       : f32,
+  fine      : f32,    // 1 for the fine level near the camera (its finest octaves), 0 the whole reef's
+  // The field pass's slab of the grid: its first z, and how many; the
+  // most vertices and indices the mesh's buffers hold.
+  slab      : vec4u,
 }
 
 struct Vertex {
@@ -48,57 +51,10 @@ struct Vertex {
 @group(0) @binding(7) var<storage, read_write> indices : array<u32>;
 @group(0) @binding(8) var<storage, read_write> args : array<u32, 5>;
 
-const maxVertices = 1200000u;
-const maxIndices = 7200000u;
 const none = 0xffffffffu;
 
-fn hash3(p : vec3i) -> f32 {
-  var h = (u32(p.x) * 0x8da6b343u) ^ (u32(p.y) * 0xd8163841u) ^ (u32(p.z) * 0xcb1ab31fu);
-  h = h ^ (h >> 15u);
-  h = h * 0x2c1b3c6du;
-  h = h ^ (h >> 12u);
-  h = h * 0x297a2d39u;
-  h = h ^ (h >> 15u);
-  return f32(h & 0xffffffu) / 16777216.0;
-}
-
-// Value noise in three dimensions, smooth, -1 to 1, a feature a unit wide.
-fn noise3(p : vec3f) -> f32 {
-  let i = vec3i(floor(p));
-  let f = fract(p);
-  let u = f * f * (3.0 - 2.0 * f);
-  let a = mix(hash3(i), hash3(i + vec3i(1, 0, 0)), u.x);
-  let b = mix(hash3(i + vec3i(0, 1, 0)), hash3(i + vec3i(1, 1, 0)), u.x);
-  let c = mix(hash3(i + vec3i(0, 0, 1)), hash3(i + vec3i(1, 0, 1)), u.x);
-  let d = mix(hash3(i + vec3i(0, 1, 1)), hash3(i + vec3i(1, 1, 1)), u.x);
-  return mix(mix(a, b, u.y), mix(c, d, u.y), u.z) * 2.0 - 1.0;
-}
-
-fn fbm(p : vec3f) -> f32 {
-  return 0.55 * noise3(p) + 0.3 * noise3(p * 2.03 + 11.0) + 0.15 * noise3(p * 4.1 + 23.0);
-}
-
-// The distance to the nearest of a scatter of points, one to each unit
-// cell: small near the points, which become holes.
-fn worley(p : vec3f) -> f32 {
-  let base = vec3i(floor(p));
-  var best = 9.0;
-  for (var z = -1; z <= 1; z++) {
-    for (var y = -1; y <= 1; y++) {
-      for (var x = -1; x <= 1; x++) {
-        let c = base + vec3i(x, y, z);
-        let at = vec3f(c) + vec3f(hash3(c), hash3(c + vec3i(17, 0, 0)), hash3(c + vec3i(0, 31, 0)));
-        best = min(best, length(p - at));
-      }
-    }
-  }
-  return best;
-}
-
-fn smoothMin(a : f32, b : f32, k : f32) -> f32 {
-  let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
-}
+// (The noise and the rock's surface are shaders/rock.wgsl's, which
+// `Reef/Bommies.lean` puts before this.)
 
 // A blob: an ellipsoid above its middle; below, a column, narrowing to
 // its base and on down into the sand, so that nothing of the rock floats
@@ -115,33 +71,16 @@ fn blob(p : vec3f, i : u32) -> f32 {
   return (length(q / r) - 1.0) * min(r.x, r.y);
 }
 
-// The framework's signed distance at `p`: negative in the rock.
+// The framework's signed distance at `p`: negative in the rock. The
+// bommies' mass, their blobs joined only a little (lumps, not one melted
+// shape); and on it the rock's surface (shaders/rock.wgsl), as finely as
+// this level's cells can hold.
 fn sdf(p : vec3f) -> f32 {
-  var d = 1e5;
+  var mass = 1e5;
   for (var i = 0u; i < bake.blobCount; i++) {
-    d = smoothMin(d, blob(p, i), 0.7);
+    mass = rockSmoothMin(mass, blob(p, i), 0.35);
   }
-  if (d > 1.5) { return d; }
-  // Weathered: lumps and hollows of a metre, and of a hand.
-  d += 0.26 * fbm(p * 0.7) + 0.07 * fbm(p * 3.0 + 7.0);
-  // Knobs: the old coral heads the rock is built of, domes a third of a
-  // metre across, crowded (ridged noise, so they meet in creases).
-  let knob = 1.0 - abs(noise3(p * 2.4 + 17.0));
-  d -= 0.09 * knob * knob - 0.04;
-  // And smaller: the colonies' own lumps and ridges, a hand across.
-  let small = 1.0 - abs(noise3(p * 6.5 + 29.0));
-  d -= 0.035 * small * small - 0.015;
-  d += 0.02 * noise3(p * 11.0 + 3.0);
-  // Ledges: the rock's layers, a little stepped.
-  d += 0.035 * sin(p.y * 9.0 + fbm(p * 0.7) * 3.0);
-  // Holes: the erosion's, and the borers': pockets a quarter metre across.
-  let w = worley(p * 1.1 + 3.0);
-  d = max(d, -(w - 0.24) / 1.1);
-  // And the borers' smaller holes, a few centimetres, in their crowds.
-  let bored = smoothstep(-0.1, 0.4, noise3(p * 0.9 + 51.0));
-  let w2 = worley(p * 3.2 + 8.0);
-  d = max(d, -(w2 - 0.2 * bored) / 3.2);
-  return d;
+  return rockSurface(p, mass, bake.cell);
 }
 
 fn fieldAt(i : vec3i) -> f32 {
@@ -149,7 +88,11 @@ fn fieldAt(i : vec3i) -> f32 {
 }
 
 @compute @workgroup_size(4, 4, 4)
-fn field(@builtin(global_invocation_id) id : vec3u) {
+fn field(@builtin(global_invocation_id) gid : vec3u) {
+  // (A slab of the grid at a time: the fine level is baked over a few
+  // frames, a slab each, so that no frame takes the whole of it.)
+  if (gid.z >= bake.slab.y) { return; }
+  let id = gid + vec3u(0u, 0u, bake.slab.x);
   if (any(id >= bake.dims)) { return; }
   let p = bake.origin + vec3f(id) * bake.cell;
   textureStore(fieldOut, id, vec4f(sdf(p), 0.0, 0.0, 0.0));
@@ -217,7 +160,7 @@ fn vertexPass(@builtin(global_invocation_id) id : vec3u) {
   }
   lit = clamp(lit, 0.0, 1.0);
   let v = atomicAdd(&counts[0], 1u);
-  if (v >= maxVertices) { cellIndex[linear] = none; return; }
+  if (v >= bake.slab.z) { cellIndex[linear] = none; return; }
   vertices[v] = Vertex(p, ao, normal, lit * lit * (3.0 - 2.0 * lit));
   cellIndex[linear] = v;
 }
@@ -251,7 +194,7 @@ fn facePass(@builtin(global_invocation_id) id : vec3u) {
     let d = cellIndex[cellLinear(vec3u(c3))];
     if (a == none || b == none || c == none || d == none) { continue; }
     let at = atomicAdd(&counts[1], 6u);
-    if (at + 6u > maxIndices) { continue; }
+    if (at + 6u > bake.slab.w) { continue; }
     // Wound to face out of the rock, whichever side of the edge it is on.
     var b2 = b;
     var d2 = d;
@@ -267,7 +210,7 @@ fn facePass(@builtin(global_invocation_id) id : vec3u) {
 
 @compute @workgroup_size(1)
 fn countPass() {
-  args[0] = min(atomicLoad(&counts[1]), maxIndices);
+  args[0] = min(atomicLoad(&counts[1]), bake.slab.w);
   args[1] = 1u;
   args[2] = 0u;
   args[3] = 0u;

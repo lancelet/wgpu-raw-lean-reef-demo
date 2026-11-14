@@ -23,6 +23,37 @@ struct Vertex {
 @group(1) @binding(1) var rockDetail : texture_2d_array<f32>;
 @group(1) @binding(2) var rockSampler : sampler;
 
+// The levels of the reef's mesh (`Reef/Bommies.lean`): the whole reef's,
+// and finer ones about the camera, each nearer it than the last. A level
+// holds the rock's bands its cells can (shaders/rock.wgsl), and the
+// shading the rest. Toward the edge of its reach, a level's vertices
+// slide onto its parent's surface (the parent's field, between its
+// points), by their distance from the eye; at its reach, they are the
+// parent's, and the parent's mesh takes over: so nothing jumps, there or
+// when a level is baked anew about where the camera has gone (whose
+// mesh, on the same lattice, is the same where the two overlap).
+struct Lod {
+  own    : vec4f,  // this level's cells' width; where its vertices begin to slide, and where they are the parent's; 1 if it has a parent
+  reach  : vec4f,  // x: nearer than this, a finer level draws, not this one; y: this level draws nearer than this
+  parent : vec4f,  // the parent's box's corner; its cells' width
+  dims   : vec4f,  // the parent's grid's points along x, y, z
+}
+@group(1) @binding(3) var<uniform> lod : Lod;
+@group(1) @binding(4) var parentField : texture_3d<f32>;
+
+// The parent's distance at `p`, between its field's points.
+fn parentDistance(p : vec3f) -> f32 {
+  let g = (p - lod.parent.xyz) / lod.parent.w;
+  let top = lod.dims.xyz - 1.0;
+  let i = vec3i(floor(clamp(g, vec3f(0.0), top - 0.001)));
+  let f = clamp(g - vec3f(i), vec3f(0.0), vec3f(1.0));
+  let a = mix(textureLoad(parentField, i, 0).r, textureLoad(parentField, i + vec3i(1, 0, 0), 0).r, f.x);
+  let b = mix(textureLoad(parentField, i + vec3i(0, 1, 0), 0).r, textureLoad(parentField, i + vec3i(1, 1, 0), 0).r, f.x);
+  let c = mix(textureLoad(parentField, i + vec3i(0, 0, 1), 0).r, textureLoad(parentField, i + vec3i(1, 0, 1), 0).r, f.x);
+  let d = mix(textureLoad(parentField, i + vec3i(0, 1, 1), 0).r, textureLoad(parentField, i + vec3i(1, 1, 1), 0).r, f.x);
+  return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+
 // The detail tile's width, in metres (`Reef.rockTileWidth`).
 const rockTile = 0.25;
 
@@ -32,16 +63,38 @@ struct Out {
   @location(1) normal   : vec3f,
   @location(2) ao       : f32,
   @location(3) shadow   : f32,
+  // The width of the cells of the mesh here, as slid: which of the rock's
+  // bands it holds, and so which the shading must.
+  @location(4) cell     : f32,
 }
 
 @vertex fn vs(@builtin(vertex_index) i : u32) -> Out {
   let v = vertices[i];
+  var position = v.position;
+  var normal = v.normal;
+  var cell = lod.own.x;
+  if (lod.own.w > 0.5) {
+    // Slid onto the parent's surface, by the distance from the eye: along
+    // the parent's field's gradient, by its distance there.
+    let slide = smoothstep(lod.own.y, lod.own.z, length(position - frame.camera.xyz));
+    if (slide > 0.0) {
+      let e = lod.parent.w * 0.5;
+      let toward = vec3f(parentDistance(position + vec3f(e, 0.0, 0.0)) - parentDistance(position - vec3f(e, 0.0, 0.0)),
+                         parentDistance(position + vec3f(0.0, e, 0.0)) - parentDistance(position - vec3f(0.0, e, 0.0)),
+                         parentDistance(position + vec3f(0.0, 0.0, e)) - parentDistance(position - vec3f(0.0, 0.0, e)));
+      let up = normalize(toward + vec3f(0.0, 1e-6, 0.0));
+      position = position - up * parentDistance(position) * slide;
+      normal = normalize(mix(normal, up, slide));
+      cell = mix(cell, lod.parent.w, slide);
+    }
+  }
   var out : Out;
-  out.relative = v.position - frame.camera.xyz;
+  out.relative = position - frame.camera.xyz;
   out.position = frame.viewProj * vec4f(out.relative, 1.0);
-  out.normal = v.normal;
+  out.normal = normal;
   out.ao = v.ao;
   out.shadow = v.shadow;
+  out.cell = cell;
   return out;
 }
 
@@ -148,6 +201,10 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
   let dist = length(in.relative);
+  // Each level draws only its own reach about the eye: nearer, the finer
+  // level does; farther, its parent. (First, before any of the work: a
+  // discarded pixel still helps its neighbours take their derivatives.)
+  if (dist < lod.reach.x || dist >= lod.reach.y) { discard; }
   let geometric = normalize(in.normal);
   var n = geometric;
   var w = pow(abs(geometric), vec3f(4.0));
@@ -198,9 +255,16 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   // light; a ragged hand or so up, wholly the rock; between, a smooth
   // blend of the two, so nothing changes at a line.
   let seam = 1.0 - smoothstep(0.0, 0.3, above + 0.06 * small + 0.04 * mid);
-  // The bump: the coral heads' knobs (exact, from the noise), and the
-  // tile's own slope; held to a sane tilt.
-  var slope = 0.07 * knobs * (-sign(small)) * smallG.yzw * near + 0.8 * detailSlope;
+  // The rock's bands the mesh here does not hold (shaders/rock.wgsl),
+  // each until it is smaller than the pixel: a height, whose slope bends
+  // the normal and whose hollows are darker.
+  let bands = rockBandsForShading(world, in.cell, dist * frame.camera.w);
+  let erosion = bands.x;
+  let erosionSlope = bands.yzw;
+  let close = 1.0;
+  // The bump: the coral heads' knobs (exact, from the noise), the finer
+  // bands, and the tile's own slope; held to a sane tilt.
+  var slope = 0.07 * knobs * (-sign(small)) * smallG.yzw * near + erosionSlope + 0.8 * detailSlope;
   slope = slope * min(1.0, 1.5 / max(length(slope), 1e-6));
   // The material. Under it all, old limestone, pale and a little warm;
   // over it, in patches a hand to a metre across, their edges ragged:
@@ -228,6 +292,8 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   albedo = mix(albedo, vec3f(0.42, 0.18, 0.12), sponge * 0.7);
   // Close up, the coral it was: the tile's brightness and grit, darker in
   // its cavities; far off, their means.
+  // (The finer bands' hollows darker, their crags lighter.)
+  albedo = albedo * mix(1.0, clamp(0.75 + 18.0 * erosion, 0.55, 1.15), close);
   albedo = albedo * (0.7 + 0.6 * tone.x) * (0.9 + 0.2 * tone.z)
     * clamp(0.45 + 1.1 * cavity, 0.4, 1.1);
   // Sand: settled where the rock is flat enough to hold it, and banked

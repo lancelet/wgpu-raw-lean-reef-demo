@@ -614,6 +614,8 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   r.lastTime.set app.time
   r.snow.step r.queue encoder r.data (min 0.1 (max 0 (app.time - last)))
     app.water.snowReach app.time
+  -- The bommies' fine level, about the eye.
+  r.bommies.update r.queue encoder eye
   -- The seabed's map, once.
   unless ← r.seabedBaked.get do
     r.seabed.bake encoder

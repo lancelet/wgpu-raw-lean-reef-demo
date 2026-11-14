@@ -274,7 +274,7 @@ structure Water where
   shaftReach    : Float := 30
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
   before the filmic curve. -/
-  exposure      : Float := 0.7
+  exposure      : Float := 0.6
   /-- The swell (`shaders/frame.wgsl`): the long waves under the chop, a
   heave of the surface that passes overhead. Its height, trough to crest,
   in metres; its period, in seconds, which with the depth fixes its

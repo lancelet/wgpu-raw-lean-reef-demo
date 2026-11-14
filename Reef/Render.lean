@@ -471,7 +471,7 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
     layout  := r.resolveLayout
     entries := #[{ binding := 0, textureView := some scene }]
   }
-  let halfSize : Extent3D := { width := max 1 (width / 8), height := max 1 (height / 8) }
+  let halfSize : Extent3D := { width := max 1 (width / 10), height := max 1 (height / 10) }
   let mirrorTexture ← r.device.createTexture {
     label := "reflection", usage := .renderAttachment ||| .textureBinding
     size := halfSize, format := sceneFormat }
@@ -562,7 +562,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let mirrorCamera := { app.camera with position := mirrorEye, pitch := -app.camera.pitch }
   r.queue.writeBuffer r.mirrorFrame 0
     (frameBytes mirrorViewProj mirrorCamera tanMirror aspect
-      (app.width / 8).toFloat (app.height / 8).toFloat app.time app.grid app.floor
+      (app.width / 10).toFloat (app.height / 10).toFloat app.time app.grid app.floor
       floor.cells app.ripples app.grains app.sun app.water)
   let mirrorNodes := app.floor.quadtree.select mirrorEye (Frustum.ofMatrix mirrorViewProj)
   r.queue.writeBuffer r.mirrorNodes 0

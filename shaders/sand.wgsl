@@ -3,8 +3,10 @@
 // floor's height (`height`, in shaders/frame.wgsl) and, near the camera,
 // its ripples' (`rippleHeight`); lit by a sun from above with the normal
 // found at each pixel, from the floor's slope, the ripples' and the
-// grains', the troughs shaded, the colour speckled by the grains; fading
-// into the background with distance as the grid does.
+// grains', the troughs shaded, the colour speckled by the grains, the
+// sun's light focused by the surface's waves into caustics; seen through
+// the water, which takes its colours with distance and scatters in its
+// own.
 
 // The nodes drawn this frame: each its corner nearest the origin (x, z)
 // and its size, in whole leaf cells, the corner's from the cell the eye
@@ -231,10 +233,15 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
   let sand = vec3f(0.55, 0.47, 0.30) * mix(1.0, 2.0 * grain.a, frame.grain.z);
-  // Lit by the sky as much as it can see, and by the sun where it is up.
+  // Lit by the sky as much as it can see, and by the sun where it is up,
+  // through the caustics (found where the sun's ray through this point
+  // meets the surface, so that they drift down the sun's slant).
   let cavity = mix(1.0, tile.a, frame.tiling.w);
-  let light = 0.25 * cavity + 0.75 * roughDiffuse(normal, sun, -view, sigma2) * lit;
+  let toSurface = (frame.water.x - world.y) / max(sun.y, 0.1);
+  let onSurface = world.xz + sun.xz * toSurface;
+  let focus = caustics(onSurface, foot);
+  let light = frame.skylight.rgb * cavity
+    + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;
-  let fade = visible(length(in.relative));
-  return vec4f(mix(background, color, fade), 1.0);
+  return vec4f(fogged(color, in.relative), 1.0);
 }

@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 192 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 368 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -14,6 +14,17 @@ struct Frame {
   tiling   : vec4f,  // the ripples' tile, in metres; the distance their displacement fades from, and to; the cavity's strength
   grain    : vec4f,  // the grains' tile, in metres; their relief; their speckle; w unused
   sun      : vec4f,  // where the sun's light comes from: unit; w unused
+  right    : vec4f,  // the camera's right, and the tangent of half the view's width
+  up       : vec4f,  // the camera's up, and the tangent of half the view's height
+  forward  : vec4f,  // the camera's forward; w unused
+  screen   : vec4f,  // the target's width and height, in pixels; the time, in seconds; w unused
+  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' cell, in metres, and their strength; w unused
+  extinct  : vec4f,  // how fast the water takes each colour, per metre; w unused
+  horizon  : vec4f,  // the water's colour seen level, far off
+  zenith   : vec4f,  // ... seen up, toward the surface
+  deep     : vec4f,  // ... seen down, into the depths
+  sunlight : vec4f,  // the sun's light at the floor
+  skylight : vec4f,  // the sky's, from all above
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -26,11 +37,26 @@ struct Frame {
 @group(0) @binding(4) var grains : texture_2d<f32>;
 @group(0) @binding(5) var horizons : texture_2d<f32>;
 
-// The background, which what is far fades into: the colour the frame is
-// cleared to.
-const background = vec3f(0.02, 0.05, 0.09);
+// The water, looking along `dir` (unit) into it with nothing in the
+// way: the horizon's colour level, brighter up toward the surface,
+// darker down.
+fn water(dir : vec3f) -> vec3f {
+  let up = smoothstep(-0.05, 0.6, dir.y);
+  let down = smoothstep(0.05, -0.5, dir.y);
+  return mix(mix(frame.horizon.rgb, frame.zenith.rgb, up), frame.deep.rgb, down);
+}
 
-// How much of something `dist` from the camera shows, the rest fog.
+// `colour`, seen through the water at `relative` from the camera: what
+// the water has not taken of it, and the water's own light scattered in
+// along the way, each colour at its own rate.
+fn fogged(colour : vec3f, relative : vec3f) -> vec3f {
+  let dist = length(relative);
+  let through = exp(-frame.extinct.rgb * dist);
+  return mix(water(relative / max(dist, 1e-4)), colour, through);
+}
+
+// How much of something `dist` from the camera shows, the rest fog: for
+// what fades by an alpha (the overlays).
 fn visible(dist : f32) -> f32 {
   return exp(-dist / frame.grid.w);
 }
@@ -87,4 +113,20 @@ fn floorSlope(xz : vec2f, e : f32) -> vec2f {
   let dx = height(xz + vec2f(e, 0.0)) - height(xz - vec2f(e, 0.0));
   let dz = height(xz + vec2f(0.0, e)) - height(xz - vec2f(0.0, e));
   return vec2f(dx, dz) / (2.0 * e);
+}
+
+// The sun's light where it falls through the surface's waves, focused
+// here and spread there: the caustics at `p` on the surface (the world's
+// xz), about 1 on the mean, more on the bright webs, less between. Two
+// fields of noise drifting over each other, each bright along its zero
+// crossings, which are a web of lines a cell or so apart. Blurred away
+// where a cell is under a pixel's footprint `foot`.
+fn caustics(p : vec2f, foot : f32) -> f32 {
+  let cell = frame.water.y;
+  let t = frame.screen.z;
+  let a = noise(p / cell + vec2f(0.11, 0.07) * t);
+  let b = noise(p / (cell * 1.37) + 7.0 + vec2f(-0.06, 0.12) * t);
+  let web = pow(1.0 - min(abs(a) * 1.6, 1.0), 5.0) + pow(1.0 - min(abs(b) * 1.6, 1.0), 5.0);
+  let sharp = 1.0 - smoothstep(cell * 0.3, cell * 1.5, foot);
+  return 1.0 + frame.water.z * sharp * (web * 1.6 - 0.45);
 }

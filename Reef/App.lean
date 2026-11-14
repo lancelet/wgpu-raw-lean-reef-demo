@@ -74,13 +74,15 @@ structure Floor where
   level's range out. -/
   morph     : Float := 0.7
   /-- The large-scale elevation's amplitude, as a factor of the height
-  function's (`shaders/frame.wgsl`): 1 as designed. -/
+  function's (`shaders/frame.wgsl`): 1 as designed. The sand waves and
+  hummocks on it are not scaled with it. -/
   amplitude : Float := 1
   deriving Repr, Inhabited
 
 /-- How far above and below 0 the floor may reach, for culling: the
-height's octaves' amplitudes summed, and some. -/
-def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude
+height's octaves' amplitudes summed, and some; the sand waves' and
+hummocks' are not scaled by the amplitude. -/
+def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude + 0.15
 
 /-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
 stays the width it is; its cells get finer. -/

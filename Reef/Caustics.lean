@@ -25,13 +25,21 @@ namespace Reef
 def causticFormat : TextureFormat := .rgba8Unorm
 
 /-- The caustics, baked: the texture array, and its view of every layer
-and level, for the sand; and the sea's surface at the last moment baked,
-the height and the slopes at each point of its grid, for looking at. -/
+and level, for the sand; and the sea, its surface at a moment, the
+height and the slopes at each point of its grid (`field`), with what
+evolves it to another moment each frame (`evolve`), for the surface
+drawn from below. -/
 structure Caustics where
-  texture : Texture
-  view    : TextureView
-  field   : Buffer
-  points  : Nat
+  texture  : Texture
+  view     : TextureView
+  field    : Buffer
+  points   : Nat
+  /-- A uniform buffer and bind group for each of the sea's three fields. -/
+  seas     : Array (Buffer × BindGroup)
+  spectrum : ComputePipeline
+  rows     : ComputePipeline
+  columns  : ComputePipeline
+  water    : Water
 
 /-- The sea's uniforms, as `shaders/ocean.wgsl` lays out `Sea`: 48
 bytes, for the moment `time` and the field `component`. -/
@@ -52,6 +60,26 @@ def addBlend : BlendState := {
   color := { operation := .add, srcFactor := .one, dstFactor := .one }
   alpha := { operation := .add, srcFactor := .one, dstFactor := .one }
 }
+
+/-- Encode, on `encoder`, the sea's surface at `time` into `field`: the
+three fields' spectra and transforms, their uniforms written first (on
+`queue`, before the encoder's commands are submitted). -/
+def Caustics.evolve (c : Caustics) (queue : Queue) (encoder : CommandEncoder)
+    (time : Float) : IO Unit := do
+  let n := c.points
+  for component in [0:3] do
+    if let some (uniform, _) := c.seas[component]? then
+      queue.writeBuffer uniform 0 (seaBytes c.water time component)
+  for (_, data) in c.seas do
+    let pass ← encoder.beginComputePass none
+    pass.setBindGroup 0 (some data) #[]
+    pass.setPipeline c.spectrum
+    pass.dispatchWorkgroups (n / 16).toUInt32 (n / 16).toUInt32 1
+    pass.setPipeline c.rows
+    pass.dispatchWorkgroups n.toUInt32 1 1
+    pass.setPipeline c.columns
+    pass.dispatchWorkgroups n.toUInt32 1 1
+    pass.«end»
 
 /-- `texture`'s view of layer `layer`'s level `level` alone, as a plain
 2D texture. -/
@@ -169,23 +197,13 @@ def Caustics.bake (device : Device) (water : Water) : IO Caustics := do
   let mipLayout ← mips.getBindGroupLayout 0
   let between ← device.createSampler (some {
     label := "mipmap", magFilter := .linear, minFilter := .linear })
+  let c : Caustics := {
+    texture, field, points := n, seas, spectrum, rows, columns, water
+    view := ← texture.createView (some { dimension := .«2dArray» }) }
   for frame in [0:frames] do
     let time := frame.toFloat / frames.toFloat * water.loop
-    for component in [0:3] do
-      if let some (uniform, _) := seas[component]? then
-        queue.writeBuffer uniform 0 (seaBytes water time component)
     let encoder ← device.createCommandEncoder none
-    -- The surface at this moment: three fields, three transforms.
-    for (_, data) in seas do
-      let pass ← encoder.beginComputePass none
-      pass.setBindGroup 0 (some data) #[]
-      pass.setPipeline spectrum
-      pass.dispatchWorkgroups (n / 16).toUInt32 (n / 16).toUInt32 1
-      pass.setPipeline rows
-      pass.dispatchWorkgroups n.toUInt32 1 1
-      pass.setPipeline columns
-      pass.dispatchWorkgroups n.toUInt32 1 1
-      pass.«end»
+    c.evolve queue encoder time
     -- Drawn down the rays into this moment's layer.
     let level0 ← layerView texture frame 0
     let pass ← encoder.beginRenderPass {
@@ -217,7 +235,6 @@ def Caustics.bake (device : Device) (water : Water) : IO Caustics := do
       }
       drawInto encoder mips data (← layerView texture frame level)
     queue.submit #[← encoder.finish none]
-  return { texture, field, points := n
-           view := ← texture.createView (some { dimension := .«2dArray» }) }
+  return c
 
 end Reef

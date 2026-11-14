@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 384 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 400 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -26,6 +26,7 @@ struct Frame {
   sunlight : vec4f,  // the sun's light at the floor
   skylight : vec4f,  // the sky's, from all above
   caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; w unused
+  surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; z, w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -41,6 +42,27 @@ struct Frame {
 // over one tile of the surface, the light over its brightest.
 @group(0) @binding(6) var caustics : texture_2d_array<f32>;
 const causticBrightest = 8.0;
+// The sea's surface at this moment (`shaders/ocean.wgsl`, evolved each
+// frame): the height and the slopes at each point of a grid over one
+// tile, `seaPoints` a side.
+@group(0) @binding(7) var<storage, read> sea : array<vec4f>;
+const seaPoints = 256u;
+
+// The sea's surface at `xz`, in the world, between the grid's points:
+// its height, and its slope along x and z.
+fn seaAt(xz : vec2f) -> vec3f {
+  let uv = xz / frame.caustic.x * f32(seaPoints);
+  let i = vec2i(floor(uv));
+  let f = fract(uv);
+  let n = i32(seaPoints);
+  let i00 = vec2u(vec2i((i.x % n + n) % n, (i.y % n + n) % n));
+  let i11 = (i00 + vec2u(1u)) % seaPoints;
+  let f00 = sea[i00.y * seaPoints + i00.x].xyz;
+  let f10 = sea[i00.y * seaPoints + i11.x].xyz;
+  let f01 = sea[i11.y * seaPoints + i00.x].xyz;
+  let f11 = sea[i11.y * seaPoints + i11.x].xyz;
+  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y);
+}
 
 // The water, looking along `dir` (unit) into it with nothing in the
 // way: the horizon's colour level, brighter up toward the surface,

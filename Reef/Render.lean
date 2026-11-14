@@ -9,7 +9,10 @@ import Reef.Timing
 /-!
 # Drawing
 
-One render pass, with a depth buffer, timed as a whole (on Metal a
+Before the frame's pass, the sea's surface for the moment, evolved in
+compute (`Reef/Caustics.lean`), for the surface drawn from below
+(`shaders/surface.wgsl`) over the sand. One render pass, with a depth
+buffer, timed as a whole (on Metal a
 pass's own stamps overlap the next's, so passes cannot be told apart;
 what a thing costs is the difference with it off): the water behind,
 then the sand, the floor's quadtree
@@ -68,6 +71,10 @@ structure Renderer where
   format   : TextureFormat
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
+  surface  : RenderPipeline
+  /-- The surface's grid, indexed, and how many indices. -/
+  surfaceIndices : Buffer
+  surfaceCount   : UInt32
   sand     : RenderPipeline
   sandWire : RenderPipeline
   grid     : RenderPipeline
@@ -112,8 +119,8 @@ displacement fades from and to, the cavity's strength), the grains (the
 tile's width, the relief, the speckle), the sun's direction, the camera's
 basis (with the tangents of half the view's width and height), the
 screen (its size, the time), and the water (the surface's height, the
-caustics' strength; the extinction; the colours; the caustics' loop):
-384 bytes.
+caustics' strength; the extinction; the colours; the caustics' loop; the
+surface's grid and reach): 400 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
@@ -141,7 +148,8 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.depth, w.focus, 0, 0]
     ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
     ++ v w.sunlight 1 ++ v w.skylight 1
-    ++ [w.tile, w.loop, w.frames.toFloat, 0]).foldl
+    ++ [w.tile, w.loop, w.frames.toFloat, 0]
+    ++ [w.surfaceGrid.toFloat, w.surfaceReach, 0, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -220,7 +228,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 5, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
       { binding := 6, visibility := .fragment,
-        texture := { sampleType := .float, viewDimension := .«2dArray» } }
+        texture := { sampleType := .float, viewDimension := .«2dArray» } },
+      { binding := 7, visibility := .vertex ||| .fragment,
+        buffer := { type := .readOnlyStorage } }
     ]
   }
   let layout ← device.createPipelineLayout {
@@ -232,6 +242,11 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let sandModule ← createShader device "sand" (shared ++ Shaders.sand)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
+  let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
+  let surface ← pipeline device "surface" layout surfaceModule format
+  let surfaceLattice := latticeIndices water.surfaceGrid
+  let surfaceIndices ← createBuffer device "surface grid" .index
+    (surfaceLattice.foldl pushU32 ByteArray.empty)
   let backdrop ← pipeline device "water" layout waterModule format
     (depthCompare := .always) (depthWrite := false)
   let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
@@ -257,11 +272,14 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 3, sampler := some tile.sampler },
       { binding := 4, textureView := some grainTile.view },
       { binding := 5, textureView := some horizons.view },
-      { binding := 6, textureView := some caustics.view }
+      { binding := 6, textureView := some caustics.view },
+      { binding := 7, buffer := some caustics.field }
     ]
   }
   return {
-    device, format, backdrop, sand, sandWire, grid, frame, data, horizons, caustics
+    device, format, backdrop, surface, surfaceIndices, sand, sandWire, grid, frame,
+    data, horizons, caustics
+    surfaceCount := surfaceLattice.size.toUInt32
     ripples := tile
     grains  := grainTile
     queue   := ← device.getQueue
@@ -337,6 +355,10 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let depth ← r.depthFor app.width app.height
   let encoder ← r.device.createCommandEncoder none
   let n ← r.frames.get
+  -- The sea at this moment, for the surface: the same moment the
+  -- caustics' loop is at.
+  let loop := app.water.loop
+  r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{
       view       := some view
@@ -357,6 +379,9 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.draw 3 1 0 0
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)
+  pass.setPipeline r.surface
+  pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)
+  pass.drawIndexed r.surfaceCount 1 0 0 0
   if app.overlays.wireframe then
     pass.setPipeline r.sandWire
     r.drawFloor pass count (wire := true)

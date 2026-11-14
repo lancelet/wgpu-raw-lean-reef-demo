@@ -126,7 +126,8 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Caustics.lean`: the sun's light through the sea's surface, baked
   at the start as a loop of moments: the surface by a fast Fourier
   transform in compute (`shaders/ocean.wgsl`), drawn down the sun's rays
-  (`shaders/caustics.wgsl`).
+  (`shaders/caustics.wgsl`); and the same surface evolved each frame, for
+  `shaders/surface.wgsl`, the sea seen from below.
 - `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.

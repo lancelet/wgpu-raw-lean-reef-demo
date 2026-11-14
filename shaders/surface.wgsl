@@ -1,0 +1,108 @@
+// The sea's surface, seen from below (`Reef/Render.lean`): a grid of the
+// plane at the water's height, centred on the camera, its cells small
+// near and growing with distance, each vertex lifted by the sea's
+// height at that moment (`seaAt`, in shaders/frame.wgsl: the same
+// surface the caustics were baked from). From below the surface is a
+// window straight up, through which the sky shows refracted, bright,
+// with the sun in it; beyond the window's edge, about 49 degrees from
+// the vertical, the surface reflects the water below it wholly, a
+// mirror of the deep (Fresnel's equations between: some of each). Then
+// the water between the camera and the surface fogs it as everything.
+
+struct Out {
+  @builtin(position) position : vec4f,
+  @location(0) relative : vec3f,  // to the camera
+  @location(1) normal   : vec3f,
+}
+
+const waterIndex = 1.333;
+
+// Where a grid coordinate `c`, -1 to 1, falls: geometrically, the cells
+// growing with distance by the same fraction each, from `nearest` at
+// the centre out to `radius`.
+const nearest = 0.04;
+fn spaced(c : f32, radius : f32) -> f32 {
+  let k = log(radius / nearest);
+  return sign(c) * nearest * (exp(k * abs(c)) - 1.0);
+}
+
+// The grid's vertices, `grid + 1` a side, indexed as the floor's lattice
+// is (`Reef.latticeIndices`): over the square `radius` either side of the
+// camera, concentrated at the centre.
+@vertex fn vs(@builtin(vertex_index) v : u32) -> Out {
+  let grid = u32(frame.surface.x);
+  let radius = frame.surface.y;
+  let cx = f32(v % (grid + 1u)) / f32(grid) * 2.0 - 1.0;
+  let cz = f32(v / (grid + 1u)) / f32(grid) * 2.0 - 1.0;
+  let offset = vec2f(spaced(cx, radius), spaced(cz, radius));
+  // Snapped to the grid's finest cell, so that the mesh does not swim
+  // as the camera moves.
+  let cell = nearest * log(radius / nearest) * 2.0 / f32(grid);
+  let snapped = floor(frame.camera.xz / cell) * cell;
+  let world = snapped + offset;
+  let sea = seaAt(world);
+  var out : Out;
+  out.relative = vec3f(world.x - frame.camera.x, frame.water.x + sea.x - frame.camera.y,
+                       world.y - frame.camera.z);
+  out.position = frame.viewProj * vec4f(out.relative, 1.0);
+  out.normal = normalize(vec3f(-sea.y, 1.0, -sea.z));
+  return out;
+}
+
+// The sky, looking up along `dir` (unit) from just above the surface: a
+// gradient, pale at the horizon, blue up; and the sun, a disc and its
+// glow, where the sun is in the air.
+fn sky(dir : vec3f) -> vec3f {
+  let up = clamp(dir.y, 0.0, 1.0);
+  let base = mix(vec3f(0.85, 0.92, 1.0), vec3f(0.25, 0.45, 0.9), pow(up, 0.6));
+  let sunAir = sunInAir();
+  let toSun = max(dot(dir, -sunAir), 0.0);
+  let disc = pow(toSun, 2000.0) * 40.0;
+  let glow = pow(toSun, 12.0) * 1.5;
+  return base + vec3f(1.0, 0.95, 0.85) * (disc + glow);
+}
+
+// The sun's light as it comes through the air: the water's direction is
+// the sun's (`frame.sun`, where the light comes from, under water);
+// Snell's law gives the air's, bent further from the vertical.
+fn sunInAir() -> vec3f {
+  let down = -frame.sun.xyz;
+  let horizontal = down.xz;
+  let sinWater = length(horizontal);
+  let sinAir = min(waterIndex * sinWater, 0.9995);
+  let cosAir = sqrt(1.0 - sinAir * sinAir);
+  let along = horizontal / max(sinWater, 1e-5);
+  return vec3f(along.x * sinAir, -cosAir, along.y * sinAir);
+}
+
+@fragment fn fs(in : Out) -> @location(0) vec4f {
+  let dist = length(in.relative);
+  let toSurface = in.relative / max(dist, 1e-4);
+  // The normal at the pixel, from the sea itself, which the grid is too
+  // coarse for far out; the vertices' where the sea is finer than the
+  // pixel.
+  let world = in.relative.xz + frame.camera.xz;
+  let sea = seaAt(world);
+  let fine = normalize(vec3f(-sea.y, 1.0, -sea.z));
+  let coarse = normalize(in.normal);
+  let n = normalize(mix(fine, coarse, smoothstep(40.0, 120.0, dist)));
+  let cosI = max(dot(n, toSurface), 0.0);
+  let sinT = waterIndex * sqrt(max(1.0 - cosI * cosI, 0.0));
+  var reflectance = 1.0;
+  var through = vec3f(0.0);
+  if (sinT < 1.0) {
+    let cosT = sqrt(1.0 - sinT * sinT);
+    // Fresnel, unpolarised, from water into air.
+    let rs = (waterIndex * cosI - cosT) / (waterIndex * cosI + cosT);
+    let rp = (cosT - waterIndex * cosI) / (cosT + waterIndex * cosI);
+    reflectance = 0.5 * (rs * rs + rp * rp);
+    let inAir = refract(toSurface, -n, waterIndex);
+    through = sky(inAir) * (1.0 - reflectance);
+  }
+  // Reflected: the water below, as the water's own colour has it, with a
+  // little of the floor's light.
+  let mirrored = reflect(toSurface, n);
+  let below = water(mirrored) * 1.3 + frame.skylight.rgb * 0.15;
+  let colour = through + below * reflectance;
+  return vec4f(fogged(colour, in.relative), 1.0);
+}

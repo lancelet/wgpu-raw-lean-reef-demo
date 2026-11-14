@@ -208,7 +208,12 @@ overlay with the camera's line over it, read it back, and write it to
 surface's kind (sRGB), the file's bytes as shown.
 -/
 def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
-    (app : App) (path : String) : IO Unit := do
+    (app : App) (path : String) (fly : Float × Float × Float := (0, 0, 0)) : IO Unit := do
+  -- (Flown, if said, ending where the camera was put.)
+  let (fx, fy, fz) := fly
+  let seconds := warmFrames.toFloat / 60
+  let flownTo (s : Float) : Camera :=
+    { app.camera with position := app.camera.position + ⟨fx * (s - seconds), fy * (s - seconds), fz * (s - seconds)⟩ }
   let (width, height) := (app.width, app.height)
   let texture ← device.createTexture {
     label  := "screenshot"
@@ -221,7 +226,7 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
   -- too, with the camera's line and the patches drawn, how the text
   -- looks.
   for i in [0:warmFrames] do
-    renderer.draw { app with time := app.time + i.toFloat / 60 } texture
+    renderer.draw { app with time := app.time + i.toFloat / 60, camera := flownTo (i.toFloat / 60) } texture
   let app := { app with time := app.time + warmFrames.toFloat / 60 }
   renderer.overlay.show s!"{describe app}  patches {← renderer.drawn.get}"
     (textSize height)
@@ -278,7 +283,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
                              : Tile } app.water.texels path
       describeSea wgpu device renderer.caustics
     if let some path := options.screenshot then
-      screenshot wgpu device renderer app path
+      screenshot wgpu device renderer app path (options.fly.getD (0, 0, 0))
     return
   let surface ← window.createSurface wgpu
   let (status, capabilities) ← surface.getCapabilities adapter

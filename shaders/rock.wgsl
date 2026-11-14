@@ -1,21 +1,20 @@
 // The reef rock's shape (`Reef/Bommies.lean`), shared by its bake
-// (shaders/reefbake.wgsl), which meshes it, and its draw
-// (shaders/bommie.wgsl), which shades what the mesh cannot carry.
+// (shaders/reefbake.wgsl) and its draw (shaders/bommie.wgsl), in two
+// parts:
 //
-// The rock is a sum of bands, each of a known wavelength, from the
-// bommies' mass, metres across, down to grit of a millimetre and a half.
-// A level of the mesh, its cells `cell` wide, holds the bands at least
-// four cells long, the band at its limit fading out from four cells to
-// two, and none shorter (`meshHolds`). The shading carries every band the
-// mesh leaves out, by the same functions and the complementary weights,
-// as a bending of the normal and a darkening of the hollows; until a
-// band is shorter than a pixel, where it fades too (into the roughness it
-// is). So whatever the level, the rock at a pixel has every band, split
-// differently between mesh and shading: a level giving way to another
-// shifts bands from one to the other, and changes nothing to be seen.
-// (Nanite's rule, that a coarser level is the finer simplified within an
-// error, and is switched to only where the error is too small to see,
-// here by the band.)
+// The mass (`rockMass`): the bommies' blobs, warped, lumped and creased,
+// nothing in it narrower than half a metre,
+// so that a grid of ten centimetres holds it whole, and nothing comes
+// loose of it. Baked once into the reef's field, and meshed.
+//
+// The detail (`rockDisplacement`): crags, the domes of coral heads, the
+// borers' pits, and finer erosion down to a millimetre, as a displacement
+// of the mass's surface, out and in, by bands of a baked noise. A
+// displacement of bounded slope cannot pinch off an island. Drawn per
+// pixel: the mass's mesh, inflated to hold all of it, is rasterised, and
+// each pixel marches in from it to the rock (shaders/bommie.wgsl), with
+// every band at least a couple of pixels long, each fading in as it grows
+// past that. There are no levels: nothing switches, at any distance.
 
 fn rockHash(p : vec3i) -> f32 {
   var h = (u32(p.x) * 0x8da6b343u) ^ (u32(p.y) * 0xd8163841u) ^ (u32(p.z) * 0xcb1ab31fu);
@@ -93,20 +92,6 @@ fn rockSmoothMin(a : f32, b : f32, k : f32) -> f32 {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// How much of a band of wavelength `lambda` a mesh of cells `cell` holds.
-fn meshHolds(lambda : f32, cell : f32) -> f32 {
-  return smoothstep(2.0 * cell, 4.0 * cell, lambda);
-}
-
-// The fine bands: eight octaves, from a fifth of a metre to a millimetre
-// and a half, each half the last; crags (ridged) in the coarser three,
-// knobs and grit below. Each a height out of the rock, metres.
-const rockBandCount = 8;
-
-fn bandFrequency(i : i32) -> f32 {
-  return 4.6 * exp2(f32(i));
-}
-
 // The bands' noise: value noise with its gradient, repeating every
 // `bandPeriod` of its features, baked into a 3D texture (`bakeBandNoise`,
 // shaders/reefbake.wgsl) with `bandTexels` texels to a feature, which
@@ -148,99 +133,91 @@ fn bandNoiseExact(p : vec3f) -> vec4f {
   return vec4f(value * 2.0 - 1.0, grad * 2.0);
 }
 
-// Band `i` at `p`: its height, and its gradient.
-fn rockBand(p : vec3f, i : i32) -> vec4f {
-  let f = bandFrequency(i);
-  let amplitude = 0.032 * pow(0.55, f32(i));
-  let n = bandNoise(p * f + vec3f(7.0, 13.0, 3.0) * f32(i + 1));
-  if (i < 3) {
-    let r = 1.0 - abs(n.x);
-    let dr = -sign(n.x) * n.yzw * f;
-    return amplitude * vec4f(r * r - 0.4, 2.0 * r * dr);
-  }
-  return amplitude * vec4f(n.x, n.yzw * f);
-}
-
-// The bands a mesh of cells `cell` holds, at `p`: their height.
-fn rockBandsForMesh(p : vec3f, cell : f32) -> f32 {
-  var h = 0.0;
-  for (var i = 0; i < rockBandCount; i++) {
-    let w = meshHolds(1.0 / bandFrequency(i), cell);
-    if (w <= 0.0) { break; }
-    h += w * rockBand(p, i).x;
-  }
-  return h;
-}
-
-// The bands the mesh of cells `cell` does not hold, at `p`, for a pixel
-// `pixel` metres across there: their height and gradient, each fading out
-// as it shrinks below the pixel.
-fn rockBandsForShading(p : vec3f, cell : f32, pixel : f32) -> vec4f {
-  var h = vec4f(0.0);
-  for (var i = 0; i < rockBandCount; i++) {
-    let lambda = 1.0 / bandFrequency(i);
-    let seen = smoothstep(2.0 * pixel, 5.0 * pixel, lambda);
-    if (seen <= 0.0) { break; }
-    let w = (1.0 - meshHolds(lambda, cell)) * seen;
-    if (w > 0.0) { h += w * rockBand(p, i); }
-  }
-  return h;
-}
-
-// The rock's signed distance at `p`, negative in it, for a mesh of cells
-// `cell`, given the distance to its mass (the bommies' blobs, joined).
-// Old reef rock is coral heads, plates and rubble cemented together and
-// eaten away, so it is built so:
-//   its place warped, so nothing is round;
-//   eroded: lumps, sharp creases (the folded noise's valleys), crags;
-//   the domes of coral heads, crowded over it, bulging from it;
-//   holes: the erosion's, and the borers';
-//   and the fine bands, as the mesh can hold them.
-// Every feature narrower than the mesh can hold is faded out of it
-// (`meshHolds`), so the coarser level is the finer smoothed.
-fn rockSurface(p : vec3f, mass : f32, cell : f32) -> f32 {
-  if (mass > 1.2) { return mass; }
-  var d = mass;
+// The bommies' mass at `p`, given the distance to their blobs, joined.
+fn rockMass(p : vec3f, blobs : f32) -> f32 {
+  if (blobs > 1.2) { return blobs; }
+  var d = blobs;
   let q = p + 0.3 * vec3f(rockFbm(p * 0.55), rockFbm(p * 0.55 + 5.1), rockFbm(p * 0.55 + 9.7));
-  // (Their slopes kept, together, under the surface's own: a
-  // displacement that changes faster than the surface it moves pinches
-  // off islands, which float.)
+  // Lumps and hollows of a metre; creases, folded.
   d += 0.2 * rockFbm(q * 0.8);
   d += 0.12 * abs(rockNoise(q * 1.3 + 4.0)) - 0.05;
-  d -= meshHolds(0.45, cell) * (0.08 * rockRidged(q * 2.2 + 13.0) - 0.03);
-  // (And nothing stands more than a little proud of the mass.)
-  d = max(d, mass - 0.12);
-  // The domes: half-sunk heads, a fifth to two fifths of a metre, bulging
-  // no further from the rock than most of their radius.
-  let domes = meshHolds(0.3, cell);
-  if (d < 0.5 && domes > 0.0) {
-    let g = q / 0.65;
-    let base = vec3i(floor(g));
-    var withDomes = d;
-    for (var z = 0; z <= 1; z++) {
-      for (var y = 0; y <= 1; y++) {
-        for (var x = 0; x <= 1; x++) {
-          let c = base + vec3i(x, y, z);
-          let at = (vec3f(c) + vec3f(rockHash(c), rockHash(c + vec3i(5, 0, 0)), rockHash(c + vec3i(0, 7, 0)))) * 0.65;
-          let r = 0.1 + 0.12 * rockHash(c + vec3i(0, 0, 11));
-          if (rockHash(c + vec3i(3, 3, 3)) < 0.55) {
-            withDomes = rockSmoothMin(withDomes, max(length(q - at) - r, d - 0.6 * r), 0.05);
-          }
-        }
-      }
-    }
-    d = mix(d, withDomes, domes);
-  }
-  // Holes: the erosion's, a quarter metre, and the borers', a few
-  // centimetres, crowded in places.
-  d = max(d, -(rockWorley(p * 1.1 + 3.0) - 0.26) / 1.1);
-  let borers = meshHolds(0.25, cell);
-  if (borers > 0.0) {
-    let bored = smoothstep(-0.1, 0.4, rockNoise(p * 0.9 + 51.0));
-    let w2 = rockWorley(p * 3.2 + 8.0);
-    d = mix(d, max(d, -(w2 - 0.22 * bored) / 3.2), borers);
-  }
-  // The fine bands the mesh holds.
-  if (d < 0.2) { d -= rockBandsForMesh(p, cell); }
+  d = max(d, blobs - 0.12);
+  // (No holes cut through it: the detail's pits, bounded in depth, are
+  // its hollows; a void cut through a thin part of the mass leaves it
+  // see-through, or a piece of it loose.)
   return d;
+}
+
+// The detail's bands: the noise's frequency (features a metre), its
+// amplitude (metres, out of the rock), and its kind: 0 noise, 1 crags
+// (ridged), 2 domes (rounded bumps), 3 pits (rounded hollows). Coarsest
+// first.
+const detailBandCount = 12;
+
+fn detailBand(i : i32) -> vec4f {
+  if (i == 0) { return vec4f(2.2, 0.07, 1.0, 0.0); }
+  if (i == 1) { return vec4f(1.6, 0.06, 2.0, 0.0); }
+  if (i == 2) { return vec4f(3.3, 0.04, 3.0, 0.0); }
+  if (i == 3) { return vec4f(4.6, 0.03, 1.0, 0.0); }
+  if (i == 4) { return vec4f(9.2, 0.014, 1.0, 0.0); }
+  if (i == 5) { return vec4f(7.0, 0.012, 3.0, 0.0); }
+  if (i == 6) { return vec4f(18.0, 0.006, 0.0, 0.0); }
+  if (i == 7) { return vec4f(37.0, 0.003, 0.0, 0.0); }
+  if (i == 8) { return vec4f(75.0, 0.0015, 0.0, 0.0); }
+  if (i == 9) { return vec4f(150.0, 0.0008, 0.0, 0.0); }
+  if (i == 10) { return vec4f(300.0, 0.0004, 0.0, 0.0); }
+  return vec4f(600.0, 0.0002, 0.0, 0.0);
+}
+
+// The first three bands, the coarsest (crags, domes and pits of half a
+// metre or so), the reef's field holds, baked with the mass: a grid of
+// ten centimetres holds them well. The rest are the march's. The most
+// those lift the rock out of the field's surface, and sink it in, in
+// metres: the mesh is inflated by the first and a little
+// (`Reef.reefIso`), and a pixel's march goes in no further than both.
+const bakedBands = 3;
+const detailOut = 0.06;
+const detailIn = 0.02;
+// The most the bands after the first `bakedBands + 3` lift or sink the
+// rock: the march's first phase, with only the three before them, stops
+// this far short.
+const fineReach = 0.013;
+
+// The detail at `p`, its height out of the rock and its gradient, with
+// each band weighted by how much longer it is than `footprint` metres
+// (from `lo` footprints, none, to `hi`, all of it); and, apart, the fine
+// bands' height alone, for darkening their hollows.
+struct Detail {
+  height : vec4f,
+  fine   : f32,
+}
+
+fn rockDisplacement(p : vec3f, footprint : f32, lo : f32, hi : f32, first : i32, last : i32) -> Detail {
+  var r : Detail;
+  for (var i = first; i < last; i++) {
+    let band = detailBand(i);
+    let lambda = 1.0 / band.x;
+    // (For the geometry, `lo` > 1, a band also only where it is tall
+    // enough to move the rock by half a footprint: below that it is the
+    // normal's alone. Nanite's measure: the error, in pixels.)
+    var w = smoothstep(lo * footprint, hi * footprint, lambda);
+    if (lo > 1.5) { w *= smoothstep(0.25 * footprint, 0.5 * footprint, band.y); }
+    if (w <= 0.0) { break; }
+    let n = bandNoise(p * band.x + vec3f(7.0, 13.0, 3.0) * f32(i + 1));
+    let g = n.yzw * band.x;
+    var h = vec4f(n.x, g);
+    if (band.z == 1.0) {
+      let k = 1.0 - abs(n.x);
+      h = vec4f(k * k, -2.0 * k * sign(n.x) * g);
+    } else if (band.z == 2.0) {
+      let t = clamp(n.x * 1.25, 0.0, 1.0);
+      h = vec4f(t * t * (3.0 - 2.0 * t), select(vec3f(0.0), 6.0 * t * (1.0 - t) * 1.25 * g, n.x > 0.0 && n.x < 0.8));
+    } else if (band.z == 3.0) {
+      let t = clamp((n.x - 0.35) * 2.5, 0.0, 1.0);
+      h = -vec4f(t * t * (3.0 - 2.0 * t), select(vec3f(0.0), 6.0 * t * (1.0 - t) * 2.5 * g, n.x > 0.35 && n.x < 0.75));
+    }
+    r.height += w * band.y * h;
+    if (i >= 6) { r.fine += w * band.y * h.x; }
+  }
+  return r;
 }

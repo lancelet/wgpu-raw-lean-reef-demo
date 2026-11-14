@@ -95,13 +95,19 @@ bytes. For a grid at `origin` of cells `cell` wide, `dims` points along
 each axis; the fine level's octaves if `fine`; the field pass's slab of
 `zCount` points along z from `zStart`; and the mesh's buffers' sizes. -/
 def reefBakeBytes (origin : Vec3) (cell : Float) (dims : Nat × Nat × Nat)
-    (blobCount : Nat) (sun : Vec3) (fine : Bool) (zStart zCount maxVertices maxIndices : Nat) :
+    (blobCount : Nat) (sun : Vec3) (iso : Float) (zStart zCount maxVertices maxIndices : Nat) :
     ByteArray :=
   let (nx, ny, nz) := dims
   let bytes := [origin.x, origin.y, origin.z, cell].foldl pushF32 ByteArray.empty
   let bytes := [nx, ny, nz, blobCount].foldl (fun b n => pushU32 b n.toUInt32) bytes
-  let bytes := [sun.x, sun.y, sun.z, if fine then 1 else 0].foldl pushF32 bytes
+  let bytes := [sun.x, sun.y, sun.z, iso].foldl pushF32 bytes
   [zStart, zCount, maxVertices, maxIndices].foldl (fun b n => pushU32 b n.toUInt32) bytes
+
+/-- The level of the rock's mass its mesh is made at: inflated by the
+most the detail lifts the rock (`detailOut`, shaders/rock.wgsl), and a
+little for the mesh's own error, so that the mesh holds the rock, which
+the draw marches in to. -/
+def reefIso : Float := 0.09
 
 /-- The rock's detail tile (`shaders/rockdetail.wgsl`): its width, in
 metres, and its texels a side (a quarter of a millimetre each). -/
@@ -150,15 +156,16 @@ structure FineSpec where
   maxVertices : Nat
   maxIndices  : Nat
 
-/-- The finer levels, coarsest first: four centimetres to two and a half
-metres from the eye, two to most of a metre. Below, the shading carries
-the rock's bands (shaders/rock.wgsl). -/
-def fineSpecs : Array FineSpec := #[
-  { cell := 0.04, dims := 160, move := 0.5, slideStart := 1.6, slideEnd := 2.4,
-    maxVertices := 600000, maxIndices := 3600000 },
-  { cell := 0.02, dims := 128, move := 0.3, slideStart := 0.55, slideEnd := 0.85,
-    maxVertices := 300000, maxIndices := 1800000 }
-]
+/-- The finer levels, coarsest first, each half the last's cells: five
+centimetres out to four and a half metres from the eye (sliding onto the
+whole reef's from two and a half), two and a half out to a metre and a
+half (sliding from 0.8). Geometry is cheap here and the slides long, so
+that what changes as the eye comes nearer changes slowly. Below, the
+shading carries the rock's bands (shaders/rock.wgsl). -/
+def fineSpecs : Array FineSpec := #[]
+
+/-- Frames over which a level newly baked grows out to its reach. -/
+def fineGrow : Nat := 60
 
 /-- How many of a grid's z the fine levels bake a frame. -/
 def fineSlab : Nat := 16
@@ -181,6 +188,8 @@ structure ReefBaker where
   sampler (repeating, filtered). -/
   bands        : TextureView
   bandsSampler : Sampler
+  /-- The reef's field read between its points (clamped at its box). -/
+  fieldSampler : Sampler
 
 def ReefBaker.create (device : Device) (shared : String)
     (frameLayout : BindGroupLayout) (format depthFormat : TextureFormat) : IO ReefBaker := do
@@ -195,7 +204,7 @@ def ReefBaker.create (device : Device) (shared : String)
     { binding := n, visibility := .compute, buffer := { type := .storage } }
   let fieldWrite : BindGroupLayoutEntry :=
     { binding := 2, visibility := .compute
-      storageTexture := { access := .writeOnly, format := .r32Float, viewDimension := .«3d» } }
+      storageTexture := { access := .writeOnly, format := .rgba16Float, viewDimension := .«3d» } }
   let fieldRead : BindGroupLayoutEntry :=
     { binding := 3, visibility := .compute
       texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } }
@@ -252,11 +261,12 @@ def ReefBaker.create (device : Device) (shared : String)
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 2, visibility := .fragment, sampler := { type := .filtering } },
       { binding := 3, visibility := .vertex ||| .fragment, buffer := { type := .uniform } },
-      { binding := 4, visibility := .vertex,
-        texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } },
+      { binding := 4, visibility := .vertex ||| .fragment,
+        texture := { sampleType := .float, viewDimension := .«3d» } },
       { binding := 5, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«3d» } },
-      { binding := 6, visibility := .fragment, sampler := { type := .filtering } }]
+      { binding := 6, visibility := .fragment, sampler := { type := .filtering } },
+      { binding := 7, visibility := .fragment, sampler := { type := .filtering } }]
   }
   let drawModule ← createShader device "bommies" (shared ++ Shaders.bommie)
   let drawPipe ← device.createRenderPipeline {
@@ -271,7 +281,9 @@ def ReefBaker.create (device : Device) (shared : String)
       format := depthFormat, depthWriteEnabled := .true, depthCompare := .less }
   }
   return { fieldPipe, vertexPipe, facePipe, countPipe, fieldLayout, vertexLayout,
-           faceLayout, countLayout, drawPipe, drawLayout, bands, bandsSampler }
+           faceLayout, countLayout, drawPipe, drawLayout, bands, bandsSampler,
+           fieldSampler := ← device.createSampler (some {
+             label := "reef field", magFilter := .linear, minFilter := .linear }) }
 
 /-- A level of the reef's mesh: a grid of the field over a box, its
 cells `cell` wide, `dims` points along each axis; the field, and the mesh
@@ -310,7 +322,7 @@ def ReefLevel.create (device : Device) (baker : ReefBaker) (detail : Tile) (blob
     label := s!"{label} field", dimension := .«3d»
     usage := .storageBinding ||| .textureBinding
     size := { width := nx.toUInt32, height := ny.toUInt32, depthOrArrayLayers := nz.toUInt32 }
-    format := .r32Float
+    format := .rgba16Float
   }
   let fieldView ← field.createView none
   let vertices ← storageBuffer device s!"{label} vertices" (maxVertices * 32)
@@ -348,7 +360,8 @@ def ReefLevel.create (device : Device) (baker : ReefBaker) (detail : Tile) (blob
       { binding := 3, buffer := some lod },
       { binding := 4, textureView := some parent },
       { binding := 5, textureView := some baker.bands },
-      { binding := 6, sampler := some baker.bandsSampler }]
+      { binding := 6, sampler := some baker.bandsSampler },
+      { binding := 7, sampler := some baker.fieldSampler }]
   return { origin := ← IO.mkRef origin, cell, dims, maxVertices, maxIndices, uniform,
            field, fieldView, vertices, indices, counts, args, lod,
            fieldData, vertexData, faceData, countData, drawData }
@@ -370,7 +383,7 @@ def runPass (encoder : CommandEncoder) (pipeline : ComputePipeline) (data : Bind
 def ReefLevel.writeBake (l : ReefLevel) (queue : Queue) (blobCount : Nat) (sun : Vec3)
     (zStart zCount : Nat) : IO Unit := do
   queue.writeBuffer l.uniform 0
-    (reefBakeBytes (← l.origin.get) l.cell l.dims blobCount sun false zStart zCount
+    (reefBakeBytes (← l.origin.get) l.cell l.dims blobCount sun reefIso zStart zCount
       l.maxVertices l.maxIndices)
 
 /-- Encode the field pass over `zCount` of `l`'s grid's z (the uniforms
@@ -408,6 +421,8 @@ structure FineLevel where
   spec  : FineSpec
   sets  : Array ReefLevel
   shown : IO.Ref (Option Nat)
+  /-- Frames since it was first shown (up to `fineGrow`). -/
+  grown : IO.Ref Nat
 
 /-- The bommies: the whole reef's level, baked once (its field for the
 sand and the light too), and the finer levels about the camera. -/
@@ -451,7 +466,7 @@ def Bommies.create (device : Device) (sun : Vec3) (shared : String)
     let sets ← (List.range 2).toArray.mapM fun k =>
       ReefLevel.create device baker detail blobs s!"reef {n}.{k}" reefOrigin spec.cell
         (spec.dims, spec.dims, spec.dims) spec.maxVertices spec.maxIndices cells parents
-    levels := levels.push { spec, sets, shown := ← IO.mkRef none }
+    levels := levels.push { spec, sets, shown := ← IO.mkRef none, grown := ← IO.mkRef 0 }
     parents := sets.map (·.fieldView)
   coarse.writeBake queue blobCount sun 0 cz
   let encoder ← device.createCommandEncoder none
@@ -530,13 +545,38 @@ def Bommies.update (b : Bommies) (queue : Queue) (encoder : CommandEncoder) (eye
         b.baking.set (some (n, k, 0))
         break
       parentShown := shown.isSome
-  -- Every level's uniforms: each drawing between its child's reach and
-  -- its own, sliding onto its parent's.
-  let reachOf (n : Nat) : IO Float := do
-    match b.levels[n]? with
-    | some level => if (← level.shown.get).isSome then pure level.spec.slideEnd else pure 0
-    | none => pure 0
-  queue.writeBuffer b.coarse.lod 0 (lodBytes reefCell 1e6 2e6 none (← reachOf 0) 1e6)
+  -- Every level's reach, coarsest first: its own, but no further than its
+  -- box covers about the eye (less a cell or two), so that it never draws
+  -- where it has no geometry (its parent does, there); no further than
+  -- where its parent begins to slide (so that it slides onto its parent's
+  -- surface where that is still its own); and grown out from nothing
+  -- when first shown. Its slide begins as far inside its reach as its
+  -- spec's.
+  let mut reaches : Array (Float × Float) := #[]   -- (slide start, reach)
+  let mut limit := 1e6
+  for h : n in [0:b.levels.size] do
+    let level := b.levels[n]
+    match ← level.shown.get with
+    | none =>
+      level.grown.set 0
+      reaches := reaches.push (0, 0)
+      limit := 0
+    | some k =>
+      let g := min fineGrow ((← level.grown.get) + 1)
+      level.grown.set g
+      let corner ← (level.sets.getD k b.coarse).origin.get
+      let size := level.spec.cell * (level.spec.dims - 1).toFloat
+      let inset := [eye.x - corner.x, corner.x + size - eye.x, eye.y - corner.y,
+                    corner.y + size - eye.y, eye.z - corner.z, corner.z + size - eye.z].foldl min 1e6
+      let t := g.toFloat / fineGrow.toFloat
+      let grow := t * t * (3 - 2 * t)
+      let reach := max 0 ((min level.spec.slideEnd (min limit (inset - 2 * level.spec.cell))) * grow)
+      let width := level.spec.slideEnd - level.spec.slideStart
+      let start := max 0 (reach - width)
+      reaches := reaches.push (start, reach)
+      limit := start
+  let reachOf (n : Nat) : Float := (reaches.getD n (0, 0)).2
+  queue.writeBuffer b.coarse.lod 0 (lodBytes reefCell 1e6 2e6 none (reachOf 0) 1e6)
   for h : n in [0:b.levels.size] do
     let level := b.levels[n]
     if let some k ← level.shown.get then
@@ -551,9 +591,12 @@ def Bommies.update (b : Bommies) (queue : Queue) (encoder : CommandEncoder) (eye
               let o ← (p.sets.getD pk b.coarse).origin.get
               pure (some (o, p.spec.cell, p.spec.dims, p.spec.dims, p.spec.dims))
             | none => pure none
+      let (start, reach) := reaches.getD n (0, 0)
+      -- (It draws a little past its reach, where it is its parent's
+      -- surface already, over its parent's mesh: no crack between.)
       queue.writeBuffer (level.sets.getD k b.coarse).lod 0
-        (lodBytes level.spec.cell level.spec.slideStart level.spec.slideEnd parent
-          (← reachOf (n + 1)) (level.spec.slideEnd + 0.1))
+        (lodBytes level.spec.cell start (max reach (start + 1e-3)) parent
+          (reachOf (n + 1)) (if reach > 0 then reach + 0.05 else 0))
 
 /-- Draw the bommies in `pass` (the frame's bind group set): every level,
 each within its reach. -/

@@ -26,7 +26,7 @@ struct Bake {
   dims      : vec3u,  // the grid's points along x, y, z
   blobCount : u32,
   sun       : vec3f,  // where the sun's light comes from, under the water
-  fine      : f32,    // 1 for the fine level near the camera (its finest octaves), 0 the whole reef's
+  iso       : f32,    // the level of the mass the mesh is made at: inflated by the detail's most (shaders/rock.wgsl)
   // The field pass's slab of the grid: its first z, and how many; the
   // most vertices and indices the mesh's buffers hold.
   slab      : vec4u,
@@ -43,7 +43,7 @@ struct Vertex {
 // Two to a blob: centre and radius; height's share of the radius, how much
 // narrower at the base, a seed, unused.
 @group(0) @binding(1) var<storage, read> blobs : array<vec4f>;
-@group(0) @binding(2) var fieldOut : texture_storage_3d<r32float, write>;
+@group(0) @binding(2) var fieldOut : texture_storage_3d<rgba16float, write>;
 @group(0) @binding(3) var fieldIn : texture_3d<f32>;
 @group(0) @binding(4) var<storage, read_write> vertices : array<Vertex>;
 @group(0) @binding(5) var<storage, read_write> cellIndex : array<u32>;
@@ -88,20 +88,25 @@ fn blob(p : vec3f, i : u32) -> f32 {
   return (length(q / r) - 1.0) * min(r.x, r.y);
 }
 
-// The framework's signed distance at `p`: negative in the rock. The
-// bommies' mass, their blobs joined only a little (lumps, not one melted
-// shape); and on it the rock's surface (shaders/rock.wgsl), as finely as
-// this level's cells can hold.
+// The framework's signed distance at `p`: negative in the rock. Its
+// mass (shaders/rock.wgsl): the bommies' blobs, joined only a little
+// (lumps, not one melted shape), and their large erosion. The detail is
+// the draw's.
 fn sdf(p : vec3f) -> f32 {
-  var mass = 1e5;
+  var blobs = 1e5;
   for (var i = 0u; i < bake.blobCount; i++) {
-    mass = rockSmoothMin(mass, blob(p, i), 0.35);
+    blobs = rockSmoothMin(blobs, blob(p, i), 0.35);
   }
-  return rockSurface(p, mass, bake.cell);
+  // And the detail's coarsest bands, which this grid holds well.
+  let mass = rockMass(p, blobs);
+  if (mass > 0.3) { return mass; }
+  return mass - rockDisplacement(p, 0.0, 1.0, 1.0, 0, bakedBands).height.x;
 }
 
+// The field the mesh is made of: the mass inflated by `bake.iso` (the
+// most the detail lifts it, and a little), so that it holds the rock.
 fn fieldAt(i : vec3i) -> f32 {
-  return textureLoad(fieldIn, i, 0).r;
+  return textureLoad(fieldIn, i, 0).r - bake.iso;
 }
 
 @compute @workgroup_size(4, 4, 4)

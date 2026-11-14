@@ -23,24 +23,14 @@ struct Vertex {
 @group(1) @binding(1) var rockDetail : texture_2d_array<f32>;
 @group(1) @binding(2) var rockSampler : sampler;
 
-// The levels of the reef's mesh (`Reef/Bommies.lean`): the whole reef's,
-// and finer ones about the camera, each nearer it than the last. A level
-// holds the rock's bands its cells can (shaders/rock.wgsl), and the
-// shading the rest. Toward the edge of its reach, a level's vertices
-// slide onto its parent's surface (the parent's field, between its
-// points), by their distance from the eye; at its reach, they are the
-// parent's, and the parent's mesh takes over: so nothing jumps, there or
-// when a level is baked anew about where the camera has gone (whose
-// mesh, on the same lattice, is the same where the two overlap).
-struct Lod {
-  own    : vec4f,  // this level's cells' width; where its vertices begin to slide, and where they are the parent's; 1 if it has a parent
-  reach  : vec4f,  // x: nearer than this, a finer level draws, not this one; y: this level draws nearer than this
-  parent : vec4f,  // the parent's box's corner; its cells' width
-  dims   : vec4f,  // the parent's grid's points along x, y, z
-}
-@group(1) @binding(3) var<uniform> lod : Lod;
-@group(1) @binding(4) var parentField : texture_3d<f32>;
-// The bands' noise (shaders/rock.wgsl), as the bake reads it.
+// The reef's field, the rock's mass (shaders/rock.wgsl), read between
+// its points: for the march in to the rock from the mass's mesh, which is
+// inflated to hold all of the rock's detail.
+@group(1) @binding(4) var massField : texture_3d<f32>;
+// How far the mesh is inflated out of the mass (`Reef.reefIso`).
+const reefShell = 0.09;
+@group(1) @binding(7) var massSampler : sampler;
+// The bands' noise (shaders/rock.wgsl).
 @group(1) @binding(5) var bandsIn : texture_3d<f32>;
 @group(1) @binding(6) var bandsSampler : sampler;
 
@@ -49,17 +39,10 @@ fn bandNoise(p : vec3f) -> vec4f {
   return textureSampleLevel(bandsIn, bandsSampler, uvw, 0.0);
 }
 
-// The parent's distance at `p`, between its field's points.
-fn parentDistance(p : vec3f) -> f32 {
-  let g = (p - lod.parent.xyz) / lod.parent.w;
-  let top = lod.dims.xyz - 1.0;
-  let i = vec3i(floor(clamp(g, vec3f(0.0), top - 0.001)));
-  let f = clamp(g - vec3f(i), vec3f(0.0), vec3f(1.0));
-  let a = mix(textureLoad(parentField, i, 0).r, textureLoad(parentField, i + vec3i(1, 0, 0), 0).r, f.x);
-  let b = mix(textureLoad(parentField, i + vec3i(0, 1, 0), 0).r, textureLoad(parentField, i + vec3i(1, 1, 0), 0).r, f.x);
-  let c = mix(textureLoad(parentField, i + vec3i(0, 0, 1), 0).r, textureLoad(parentField, i + vec3i(1, 0, 1), 0).r, f.x);
-  let d = mix(textureLoad(parentField, i + vec3i(0, 1, 1), 0).r, textureLoad(parentField, i + vec3i(1, 1, 1), 0).r, f.x);
-  return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+// The rock's mass's distance at `p`, in the world.
+fn massAt(p : vec3f) -> f32 {
+  let uvw = ((p - frame.reef.xyz) / frame.reef.w + 0.5) / frame.reefDims.xyz;
+  return textureSampleLevel(massField, massSampler, uvw, 0.0).r;
 }
 
 // The detail tile's width, in metres (`Reef.rockTileWidth`).
@@ -71,38 +54,22 @@ struct Out {
   @location(1) normal   : vec3f,
   @location(2) ao       : f32,
   @location(3) shadow   : f32,
-  // The width of the cells of the mesh here, as slid: which of the rock's
-  // bands it holds, and so which the shading must.
-  @location(4) cell     : f32,
+}
+
+struct Drawn {
+  @location(0) colour : vec4f,
+  // The rock's own depth, where the march found it, not the mesh's.
+  @builtin(frag_depth) depth : f32,
 }
 
 @vertex fn vs(@builtin(vertex_index) i : u32) -> Out {
   let v = vertices[i];
-  var position = v.position;
-  var normal = v.normal;
-  var cell = lod.own.x;
-  if (lod.own.w > 0.5) {
-    // Slid onto the parent's surface, by the distance from the eye: along
-    // the parent's field's gradient, by its distance there.
-    let slide = smoothstep(lod.own.y, lod.own.z, length(position - frame.camera.xyz));
-    if (slide > 0.0) {
-      let e = lod.parent.w * 0.5;
-      let toward = vec3f(parentDistance(position + vec3f(e, 0.0, 0.0)) - parentDistance(position - vec3f(e, 0.0, 0.0)),
-                         parentDistance(position + vec3f(0.0, e, 0.0)) - parentDistance(position - vec3f(0.0, e, 0.0)),
-                         parentDistance(position + vec3f(0.0, 0.0, e)) - parentDistance(position - vec3f(0.0, 0.0, e)));
-      let up = normalize(toward + vec3f(0.0, 1e-6, 0.0));
-      position = position - up * parentDistance(position) * slide;
-      normal = normalize(mix(normal, up, slide));
-      cell = mix(cell, lod.parent.w, slide);
-    }
-  }
   var out : Out;
-  out.relative = position - frame.camera.xyz;
+  out.relative = v.position - frame.camera.xyz;
   out.position = frame.viewProj * vec4f(out.relative, 1.0);
-  out.normal = normal;
+  out.normal = v.normal;
   out.ao = v.ao;
   out.shadow = v.shadow;
-  out.cell = cell;
   return out;
 }
 
@@ -162,7 +129,7 @@ fn rockOcclusion(p : vec3f, n : vec3f) -> f32 {
   for (var k = 1; k <= 4; k++) {
     let d = 0.12 * f32(k * k);
     let weight = 1.0 / f32(k);
-    occluded += weight * clamp((d - reefDistance(p + n * d, true)) / d, 0.0, 1.0);
+    occluded += weight * clamp((d - massAt(p + n * d)) / d, 0.0, 1.0);
     total += weight;
   }
   return clamp(1.0 - 1.1 * occluded / total, 0.0, 1.0);
@@ -180,7 +147,7 @@ fn rockShadow(p : vec3f, n : vec3f) -> f32 {
   var t = 0.06;
   var lit = 1.0;
   for (var s = 0; s < 24; s++) {
-    let h = reefDistance(p + n * 0.1 + sun * t, true);
+    let h = massAt(p + n * 0.1 + sun * t);
     lit = min(lit, 0.5 + 0.5 * h / (0.05 * t + 0.015));
     t += clamp(h * 0.8, 0.03 + 0.03 * t, 0.5);
     if (lit <= 0.0 || t > 8.0) { break; }
@@ -206,14 +173,81 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   return r;
 }
 
-@fragment fn fs(in : Out) -> @location(0) vec4f {
-  let world = toWorld(in.relative);
-  let dist = length(in.relative);
-  // Each level draws only its own reach about the eye: nearer, the finer
-  // level does; farther, its parent. (First, before any of the work: a
-  // discarded pixel still helps its neighbours take their derivatives.)
-  if (dist < lod.reach.x || dist >= lod.reach.y) { discard; }
-  let geometric = normalize(in.normal);
+@fragment fn fs(in : Out) -> Drawn {
+  // The march: in from the mass's mesh (inflated to hold the rock), along
+  // the view, to where the mass less its detail is first under the pixel's
+  // footprint, the detail's bands each fading in from two footprints to
+  // five. Missing it (the mesh's shell held only air there), the pixel is
+  // not the rock's.
+  let dir = normalize(in.relative);
+  let start = length(in.relative);
+  // Through the mesh's shell, until the ray is out of it again (the
+  // mass's field more than the shell's inflation away: the mesh is that
+  // level of it): each step the rock's distance (the detail's taller bands
+  // with the mass), but at least a few millimetres; where a step crosses
+  // into the rock, the crossing found between its two ends. However the
+  // ray grazes the rock, it goes on until it is out.
+  var march = start;
+  var hit = false;
+  var before = march;
+  var hBefore = 1.0;
+  for (var k = 0; k < 32; k++) {
+    let p = toWorld(dir * march);
+    let footprint = march * frame.camera.w;
+    let mass = massAt(p);
+    if (k > 0 && mass > reefShell + 0.01) { break; }
+    let h = mass - rockDisplacement(p, footprint, 2.0, 5.0, bakedBands, bakedBands + 3).height.x;
+    if (h < 0.5 * footprint) {
+      // Crossed (or at it): the crossing, between the last two points,
+      // by two steps of the secant, keeping it bracketed.
+      if (k > 0 && h < 0.0) {
+        var a = before;
+        var ha = hBefore;
+        var b = march;
+        var hb = h;
+        for (var r = 0; r < 2; r++) {
+          let m = a + (b - a) * ha / max(ha - hb, 1e-6);
+          let q = toWorld(dir * m);
+          let hm = massAt(q) - rockDisplacement(q, m * frame.camera.w, 2.0, 5.0, bakedBands, bakedBands + 3).height.x;
+          if (hm > 0.0) { a = m; ha = hm; } else { b = m; hb = hm; }
+        }
+        march = a + (b - a) * ha / max(ha - hb, 1e-6);
+      }
+      hit = true;
+      break;
+    }
+    before = march;
+    hBefore = h;
+    // (Bold steps: the field is no true distance, changing more slowly
+    // than one, so a step of what it says is too timid; a crossing
+    // overstepped is found again between the steps' ends.)
+    march += max(h * 1.6, max(footprint, 0.004));
+  }
+  // The finer bands, a few millimetres at most, are not marched: at the
+  // crossing the march found (with the taller three), they are evaluated
+  // once, and the point moved along the ray by what they lift or sink the
+  // rock there (a step of Newton's, as parallax mapping corrects). The
+  // same evaluation gives the normal: every band at least a footprint long.
+  let coarseAt = toWorld(dir * march);
+  let finer = rockDisplacement(coarseAt, march * frame.camera.w, 1.0, 3.0, bakedBands + 3, detailBandCount);
+  let along = max(dot(-dir, normalize(in.normal)), 0.3);
+  march = march - finer.height.x / along;
+  let tall = rockDisplacement(toWorld(dir * march), march * frame.camera.w, 1.0, 3.0, bakedBands, bakedBands + 3);
+  var detail : Detail;
+  detail.height = tall.height + finer.height;
+  detail.fine = tall.fine + finer.fine;
+  if (!hit) { discard; }
+  let rel = dir * march;
+  let world = toWorld(rel);
+  let dist = march;
+  // The mass's normal (the mesh's, smooth), bent by the detail's slope:
+  // every band at least a footprint long, fading in from one to three.
+  // (The mesh's normal is the inflated mass's, smooth: the field's own
+  // bands, the crags and domes and pits, put back, exactly.)
+  let baked = rockDisplacement(toWorld(dir * march), 0.0, 1.0, 1.0, 0, bakedBands).height.yzw;
+  let smoothNormal = normalize(in.normal);
+  let massNormal = normalize(smoothNormal - (baked - smoothNormal * dot(smoothNormal, baked)));
+  let geometric = normalize(massNormal - (detail.height.yzw - massNormal * dot(massNormal, detail.height.yzw)));
   var n = geometric;
   var w = pow(abs(geometric), vec3f(4.0));
   w = w / (w.x + w.y + w.z);
@@ -261,7 +295,13 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   // Sand-blasted: a hand or two up from the sand the surge throws sand at
   // it, and it is worn pale and bare, nothing growing; ragged, higher where
   // the rock juts out.
-  let blasted = 1.0 - smoothstep(0.1, 0.45, above + 0.1 * small + 0.08 * mid);
+  // (Its top edge wanders: up and down by a hand or two around the rock,
+  // following its lumps, ragged at the edge; and in patches there is none,
+  // growth come down to the sand where the surge is kind.)
+  let blastHeight = 0.28 + 0.2 * large + 0.12 * mid + 0.06 * small;
+  let blastPatches = smoothstep(-0.35, 0.15, triplanar(world * 0.9 + 61.0, w));
+  let blasted = (1.0 - smoothstep(blastHeight - 0.12, blastHeight + 0.04, above + 0.04 * small))
+    * blastPatches;
   // The seam's zone: the bottom of the rock, where it turns into the
   // sand. At the contact it is the floor, its sand, its normal, its
   // light; a ragged hand or so up, wholly the rock; between, a smooth
@@ -270,13 +310,12 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   // The rock's bands the mesh here does not hold (shaders/rock.wgsl),
   // each until it is smaller than the pixel: a height, whose slope bends
   // the normal and whose hollows are darker.
-  let bands = rockBandsForShading(world, in.cell, dist * frame.camera.w);
-  let erosion = bands.x;
-  let erosionSlope = bands.yzw;
+  // (The detail's finest bands' hollows darker, below.)
+  let erosion = detail.fine;
   let close = 1.0;
   // The bump: the coral heads' knobs (exact, from the noise), the finer
   // bands, and the tile's own slope; held to a sane tilt.
-  var slope = 0.07 * knobs * (-sign(small)) * smallG.yzw * near + erosionSlope + 0.8 * detailSlope;
+  var slope = 0.8 * detailSlope;
   slope = slope * min(1.0, 1.5 / max(length(slope), 1e-6));
   // The material. Under it all, old limestone, pale and a little warm;
   // over it, in patches a hand to a metre across, their edges ragged:
@@ -289,7 +328,7 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   // (Roughened by noise a hand across, not by the detail tile, whose
   // millimetres read back at this scale only as its mip levels' means.)
   let ragged = 0.35 * small + 0.25 * triplanar(world * 3.3 + 47.0, w);
-  let living = 1.0 - 0.4 * blasted;
+  let living = 1.0 - 0.7 * blasted;
   var albedo = vec3f(0.58, 0.55, 0.48);
   let turf = smoothstep(-0.35, 0.35, large + 0.4 * mid + ragged) * living;
   albedo = mix(albedo, mix(vec3f(0.33, 0.33, 0.16), vec3f(0.4, 0.31, 0.2), smoothstep(-0.6, 0.6, mid + ragged)),
@@ -397,9 +436,10 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   shadow = mix(shadow, min(shadow + 0.3, floorLit.y), seam);
   let shade = cloudShade(world, t) * (1.0 - 0.85 * floating) * shadow;
   // (In the seam, the sand's rough diffuse, as the floor is lit.)
-  let diffuse = mix(max(dot(n, sun), 0.0), roughDiffuse(n, sun, -normalize(in.relative), 0.5), seam);
+  let diffuse = mix(max(dot(n, sun), 0.0), roughDiffuse(n, sun, -dir, 0.5), seam);
   let skySeen = mix(ao * floorShade * (0.55 + 0.45 * up), floorLit.x, seam);
   let sky = frame.skylight.rgb * skySeen;
   let light = sky + frame.sunlight.rgb * diffuse * focus * down * shade;
-  return vec4f(fogged(albedo * light, in.relative), 1.0);
+  let clip = frame.viewProj * vec4f(rel, 1.0);
+  return Drawn(vec4f(fogged(albedo * light, rel), 1.0), clip.z / clip.w);
 }

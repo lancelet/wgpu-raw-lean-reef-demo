@@ -193,27 +193,30 @@ def Sun.direction (s : Sun) : Vec3 :=
   ⟨s.elevation.cos * s.azimuth.cos, s.elevation.sin, s.elevation.cos * s.azimuth.sin⟩
 
 /--
-The water, as `shaders/frame.wgsl` colours by it: a warm tropical reef's,
-clear, the far field turquoise, the light from above aqua and the sun's
-warm. Colours are linear. The water takes each colour at its own rate
-with distance, red first; what it scatters in along the way is its own
-colour, by the direction looked in.
+The water, as `shaders/frame.wgsl` colours by it: a warm tropical reef's
+as an animated film paints it, clear, the water a deep gradient from a
+bright cerulean toward the surface through turquoise level to a cobalt
+blue far and below, the sun's light warm and the sky's a cool blue, so
+that the sand is cream in the sun and blue in its shade. Colours are
+linear. The water takes each colour at its own rate with distance, red
+first; what it scatters in along the way is its own colour, by the
+direction looked in.
 -/
 structure Water where
   /-- The surface's height above the floor's zero, in metres. -/
   depth      : Float := 4
   /-- How fast the water takes red, green and blue, per metre. -/
-  extinction : Vec3  := ⟨0.07, 0.04, 0.03⟩
+  extinction : Vec3  := ⟨0.08, 0.04, 0.025⟩
   /-- Its colour seen level, far off; up, toward the surface; down: a deep
   saturated teal, dark against the sand, as a photograph exposed for the
   sand has it. -/
-  horizon    : Vec3  := ⟨0.0, 0.07, 0.105⟩
-  zenith     : Vec3  := ⟨0.0, 0.16, 0.24⟩
-  deep       : Vec3  := ⟨0.0, 0.028, 0.048⟩
+  horizon    : Vec3  := ⟨0.0, 0.11, 0.2⟩
+  zenith     : Vec3  := ⟨0.04, 0.32, 0.5⟩
+  deep       : Vec3  := ⟨0.0, 0.03, 0.12⟩
   /-- The sun's light at the floor, warm, and the sky's from all above,
   dim and blue. -/
-  sunlight   : Vec3  := ⟨1.65, 1.3, 0.9⟩
-  skylight   : Vec3  := ⟨0.07, 0.13, 0.17⟩
+  sunlight   : Vec3  := ⟨1.7, 1.4, 1.0⟩
+  skylight   : Vec3  := ⟨0.08, 0.17, 0.3⟩
   /-- The caustics' strength, 0 none to 1 as the surface makes them; and
   their fringes of colour, how far the water's index for red and for blue
   lie either side of green's: 0.004 in truth, 0 no fringes. -/

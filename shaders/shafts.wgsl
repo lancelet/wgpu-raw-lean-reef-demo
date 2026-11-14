@@ -82,8 +82,10 @@ fn phase(cosine : f32, g : f32) -> f32 {
   // The swell's drift of the chop, found once, at the march's middle: it
   // varies over tens of metres, and the march is shorter than that.
   let middle = frame.camera.xyz + dir * (dist * 0.5);
-  let drift = swellDriftAt(middle.xz + sun.xz * (frame.water.x - middle.y) / max(sun.y, 0.1),
-                           frame.screen.z);
+  let middleFall = (frame.water.x - middle.y) / max(sun.y, 0.1);
+  let middleOnSurface = middle.xz + sun.xz * middleFall;
+  let bending = swellBending(middleOnSurface, frame.screen.z, middleFall);
+  let drift = swellDriftAt(middleOnSurface, frame.screen.z) + bending.xy;
   for (var i = 0; i < steps; i++) {
     let t = (f32(i) + offset) * dt;
     let p = frame.camera.xyz + dir * t;
@@ -104,7 +106,7 @@ fn phase(cosine : f32, g : f32) -> f32 {
     // Rising smoothly from the mean, so a ray's edge is soft.
     let above = max(gathered - vec3f(0.9), vec3f(0.0));
     let rays = above * above * 2.0;
-    let focus = mix(vec3f(1.0), vec3f(0.35) + rays, frame.water.y);
+    let focus = mix(vec3f(1.0), vec3f(0.35) + rays, frame.water.y) * bending.z;
     // The sun's light at the step: taken by the water on its way down;
     // and what scatters toward the camera, taken on its way there.
     let down = exp(-extinct * toSurface);

@@ -41,9 +41,12 @@ fn spaced(c : f32, radius : f32) -> f32 {
   let snapped = floor(frame.camera.xz / cell) * cell;
   let world = snapped + offset;
   let sea = seaAt(world);
+  // The swell carries the surface's points sideways in their orbits
+  // (Gerstner): the vertex goes where the water at `world` has gone.
+  let carried = world + swellAt(world, frame.screen.z).offset;
   var out : Out;
-  out.relative = vec3f(world.x - frame.camera.x, frame.water.x + sea.x - frame.camera.y,
-                       world.y - frame.camera.z);
+  out.relative = vec3f(carried.x - frame.camera.x, frame.water.x + sea.x - frame.camera.y,
+                       carried.y - frame.camera.z);
   out.position = frame.viewProj * vec4f(out.relative, 1.0);
   out.normal = normalize(vec3f(-sea.y, 1.0, -sea.z));
   return out;
@@ -52,14 +55,37 @@ fn spaced(c : f32, radius : f32) -> f32 {
 // The sky, looking up along `dir` (unit) from just above the surface: a
 // gradient, pale at the horizon, blue up; and the sun, a disc and its
 // glow, where the sun is in the air.
+// The sky, and the sun in it: its disc, bright as the sun; the flash
+// about it, which the surface's facets, each tilted its own way, throw
+// to the eye from a spread of directions, the glitter; and a soft halo.
 fn sky(dir : vec3f) -> vec3f {
   let up = clamp(dir.y, 0.0, 1.0);
   let base = mix(vec3f(0.85, 0.92, 1.0), vec3f(0.25, 0.45, 0.9), pow(up, 0.6));
   let sunAir = sunInAir();
   let toSun = max(dot(dir, -sunAir), 0.0);
-  let disc = pow(toSun, 600.0) * 30.0;
-  let glow = pow(toSun, 24.0) * 0.9;
-  return base + vec3f(1.0, 0.95, 0.85) * (disc + glow);
+  let disc = pow(toSun, 4000.0) * 400.0;
+  let flash = pow(toSun, 250.0) * 12.0;
+  let halo = pow(toSun, 12.0) * 0.6;
+  return base + vec3f(1.0, 0.96, 0.88) * (disc + flash + halo);
+}
+
+// The capillary ripples at `xz`, at `t`: the centimetre waves the wind
+// raises on the water, too fine for the sea's grid, that turn the sun's
+// image into a field of flashes; as a tilt of the surface, two octaves
+// of noise drifting with the wind, fading out with distance, where a
+// pixel spans many and they would only shimmer.
+fn capillaries(xz : vec2f, t : f32, dist : f32) -> vec2f {
+  let dir = frame.ripple.xy;
+  let drift = dir * t * 0.3;
+  let p1 = (xz - drift) / 0.05;
+  let p2 = (xz - drift * 1.6) / 0.018 + 13.0;
+  let e = 0.35;
+  let a = vec2f(noise(p1 + vec2f(e, 0.0)) - noise(p1 - vec2f(e, 0.0)),
+                noise(p1 + vec2f(0.0, e)) - noise(p1 - vec2f(0.0, e))) / (2.0 * e);
+  let b = vec2f(noise(p2 + vec2f(e, 0.0)) - noise(p2 - vec2f(e, 0.0)),
+                noise(p2 + vec2f(0.0, e)) - noise(p2 - vec2f(0.0, e))) / (2.0 * e);
+  let fade = 1.0 - smoothstep(8.0, 40.0, dist);
+  return (a * 0.045 + b * 0.025) * fade;
 }
 
 // The sun's light as it comes through the air: the water's direction is
@@ -83,7 +109,8 @@ fn sunInAir() -> vec3f {
   // pixel.
   let world = in.relative.xz + frame.camera.xz;
   let sea = seaAt(world);
-  let fine = normalize(vec3f(-sea.y, 1.0, -sea.z));
+  let ripple = capillaries(world, frame.screen.z, dist);
+  let fine = normalize(vec3f(-sea.y - ripple.x, 1.0, -sea.z - ripple.y));
   let coarse = normalize(in.normal);
   let n = normalize(mix(fine, coarse, smoothstep(40.0, 120.0, dist)));
   let cosI = max(dot(n, toSurface), 0.0);

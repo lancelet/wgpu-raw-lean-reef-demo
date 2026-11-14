@@ -79,13 +79,18 @@ fn phase(cosine : f32, g : f32) -> f32 {
   let pixelAt = frame.camera.w;  // radians a pixel
   var light = vec3f(0.0);
   let offset = dither(pixel);
+  // The swell's drift of the chop, found once, at the march's middle: it
+  // varies over tens of metres, and the march is shorter than that.
+  let middle = frame.camera.xyz + dir * (dist * 0.5);
+  let drift = swellDriftAt(middle.xz + sun.xz * (frame.water.x - middle.y) / max(sun.y, 0.1),
+                           frame.screen.z);
   for (var i = 0; i < steps; i++) {
     let t = (f32(i) + offset) * dt;
     let p = frame.camera.xyz + dir * t;
     // Under the surface only.
     if (p.y >= frame.water.x) { continue; }
     let toSurface = (frame.water.x - p.y) / max(sun.y, 0.1);
-    let onSurface = p.xz + sun.xz * toSurface;
+    let onSurface = p.xz + sun.xz * toSurface - drift;
     let uv = onSurface / causticTile;
     // Three levels softer than the pixel asks: the fine matter the light
     // scatters from blurs the columns, the small cells merge, and only

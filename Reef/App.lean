@@ -147,6 +147,23 @@ structure Ripples where
 /-- The tile's width, in metres. -/
 def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
 
+/-- The wave number, in radians a metre, of a water wave of `period`
+seconds in water `depth` metres deep, by the dispersion relation
+(the frequency squared is gravity times the wave number times the
+hyperbolic tangent of the wave number times the depth), iterated from
+the deep-water wave number. -/
+def waveNumber (period depth : Float) : Float := Id.run do
+  let omega := 2 * 3.14159265 / period
+  let deep := omega * omega / 9.81
+  let mut k := deep
+  for _ in [0:12] do
+    k := deep / (k * depth).tanh
+  return k
+
+/-- The periods of the swell's three waves, as fractions of its own
+(`shaders/frame.wgsl` has the same). -/
+def swellPeriodFractions : Array Float := #[1, 1.21, 0.83]
+
 /--
 The sand's grains, as `shaders/sand.wgsl` draws them from the tile
 `Reef/Grains.lean` bakes (`shaders/grains.wgsl`): medium sand, with
@@ -231,7 +248,7 @@ structure Water where
   tile          : Float := 8
   wind          : Float := 4.0
   windDirection : Float := 0.5
-  amplitude     : Float := 0.00045
+  amplitude     : Float := 0.0003
   shortest      : Float := 0.12
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
@@ -256,14 +273,15 @@ structure Water where
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
   before the filmic curve. -/
   exposure      : Float := 0.7
-  /-- The swell (`shaders/frame.wgsl`): what is left of the ocean's long
-  waves over the reef's crest, a slow heave of the surface: its height,
-  trough to crest, in metres (10 to 40 cm in a lagoon, over half a
-  metre at the back reef's edge on a lively day); its period, in
-  seconds (8 to 14 off the ocean); how far its waves' headings spread
+  /-- The swell (`shaders/frame.wgsl`): the long waves under the chop, a
+  heave of the surface that passes overhead. Its height, trough to crest,
+  in metres; its period, in seconds, which with the depth fixes its
+  length (`waveNumber`): the ocean's swell, 8 to 14 seconds, is 60 m long
+  here and felt rather than seen, a lagoon's wind sea of three or four
+  seconds is 15 to 20 m and seen; how far its waves' headings spread
   about the ripples', in radians. -/
-  swellHeight   : Float := 0.7
-  swellPeriod   : Float := 10
+  swellHeight   : Float := 0.5
+  swellPeriod   : Float := 3.5
   swellSpread   : Float := 0.25
   deriving Repr, Inhabited
 

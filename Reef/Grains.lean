@@ -19,28 +19,32 @@ open WebGPU.Raw
 
 namespace Reef
 
-/-- The bake's uniforms, as `shaders/grains.wgsl` lays out `Bake`:
-16 bytes. -/
-def grainBytes (g : Grains) : ByteArray :=
+/-- The bake's uniforms, as `shaders/grains.wgsl` lays out `Bake`: 32
+bytes; for the layer with the traces (`traces`) or the one without. -/
+def grainBytes (g : Grains) (traces : Bool) : ByteArray :=
   let texel := g.tile / g.texels.toFloat
-  [g.texels.toFloat, g.grain / texel, g.fragment / texel, g.fragments].foldl
-    pushF32 ByteArray.empty
+  [g.texels.toFloat, g.grain / texel, g.fragment / texel, g.fragments,
+   if traces then 1 else 0, 0, 0, 0].foldl pushF32 ByteArray.empty
 
-/-- The tile of `g`, baked. -/
+/-- The tile of `g`, baked: two layers, the first with the traces of what
+lives in the sand, the second without, for the sand to blend by where the
+sand is still (`shaders/sand.wgsl`). -/
 def Grains.bake (device : Device) (g : Grains) : IO Tile := do
-  let texture ← createTile device "grains" g.texels
+  let texture ← createTile device "grains" g.texels (layers := 2)
   let module ← createShader device "grains" Shaders.grains
   let pipeline ← tilePipeline device "grains" module "fs"
-  let params ← createBuffer device "grain bake" .uniform (grainBytes g)
-  let data ← device.createBindGroup {
-    label   := "grains"
-    layout  := ← pipeline.getBindGroupLayout 0
-    entries := #[{ binding := 0, buffer := some params }]
-  }
+  let layout ← pipeline.getBindGroupLayout 0
   let encoder ← device.createCommandEncoder none
-  drawInto encoder pipeline data (← levelView texture 0)
-  mipmaps device encoder texture g.texels
+  for layer in [0:2] do
+    let params ← createBuffer device "grain bake" .uniform (grainBytes g (layer == 0))
+    let data ← device.createBindGroup {
+      label   := "grains"
+      layout  := layout
+      entries := #[{ binding := 0, buffer := some params }]
+    }
+    drawInto encoder pipeline data (← levelView texture 0 layer)
+    mipmaps device encoder texture g.texels layer
   (← device.getQueue).submit #[← encoder.finish none]
-  Tile.of device "grains" texture
+  Tile.of device "grains" texture (layered := true)
 
 end Reef

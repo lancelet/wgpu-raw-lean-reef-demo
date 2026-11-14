@@ -27,7 +27,7 @@ struct Frame {
   skylight : vec4f,  // the sky's, from all above
   caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; w unused
   surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
-  shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; the caustics' texels a side
+  shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -37,7 +37,7 @@ struct Frame {
 // sampled: repeating, filtered by the pixel's footprint.
 @group(0) @binding(2) var ripples : texture_2d<f32>;
 @group(0) @binding(3) var rippleSampler : sampler;
-@group(0) @binding(4) var grains : texture_2d<f32>;
+@group(0) @binding(4) var grains : texture_2d_array<f32>;
 @group(0) @binding(5) var horizons : texture_2d<f32>;
 // The caustics, baked as a loop (`Reef/Caustics.lean`): a layer a moment,
 // over one tile of the surface, the light over its brightest.

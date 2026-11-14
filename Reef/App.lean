@@ -229,10 +229,10 @@ structure Water where
   and its direction, in radians from the x axis; how high the waves are,
   a factor; the shortest wave kept, in metres. -/
   tile          : Float := 8
-  wind          : Float := 3.9
+  wind          : Float := 4.0
   windDirection : Float := 0.5
-  amplitude     : Float := 0.0004
-  shortest      : Float := 0.03
+  amplitude     : Float := 0.0006
+  shortest      : Float := 0.06
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
   side; the grid of the surface drawn into each, quads a side, and its
@@ -250,9 +250,12 @@ structure Water where
   scattered toward the camera by what the water holds, in shafts under
   the surface's bright filaments: its strength, 0 none; the steps a pixel
   marches its ray; and how far, in metres. -/
-  shafts        : Float := 1.5
+  shafts        : Float := 0.6
   shaftSteps    : Nat   := 24
   shaftReach    : Float := 30
+  /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
+  before the filmic curve. -/
+  exposure      : Float := 0.7
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

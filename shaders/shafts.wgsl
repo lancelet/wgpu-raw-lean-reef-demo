@@ -75,7 +75,7 @@ fn phase(cosine : f32, g : f32) -> f32 {
   // the ray crosses them, it does not average them (the dither does
   // that, between pixels); only far off, where a pixel spans cells, the
   // level the pixel's footprint asks.
-  let texelsAcross = frame.shaft.w;
+  let texelsAcross = f32(textureDimensions(caustics).x);
   let pixelAt = frame.camera.w;  // radians a pixel
   var light = vec3f(0.0);
   let offset = dither(pixel);
@@ -87,7 +87,10 @@ fn phase(cosine : f32, g : f32) -> f32 {
     let toSurface = (frame.water.x - p.y) / max(sun.y, 0.1);
     let onSurface = p.xz + sun.xz * toSurface;
     let uv = onSurface / causticTile;
-    let lod = log2(max(1.0, t * pixelAt * texelsAcross / causticTile));
+    // A level or two softer than the pixel asks: the fine matter the
+    // light scatters from blurs the columns, and the floor's pattern is
+    // the sharper thing.
+    let lod = 2.5 + log2(max(1.0, t * pixelAt * texelsAcross / causticTile));
     let gathered = mix(textureSampleLevel(caustics, rippleSampler, uv, layer, lod).rgb,
                        textureSampleLevel(caustics, rippleSampler, uv, next, lod).rgb,
                        blend) * causticBrightest;

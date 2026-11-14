@@ -57,15 +57,20 @@ namespace Reef
 /-- The depth buffer's format. -/
 def depthFormat : TextureFormat := .depth24Plus
 
-/-- The light in the water's format: floats, for light added up. -/
+/-- The light in the water's format, and the scene's: floats, for light
+as bright as it is, made colour at the end (`shaders/resolve.wgsl`). -/
 def shaftFormat : TextureFormat := .rgba16Float
+def sceneFormat : TextureFormat := .rgba16Float
 
-/-- The depth buffer, and the size it is for. -/
+/-- The depth buffer, and the size it is for; with it, the scene's target
+in light, and the bind group that resolves it to colour. -/
 structure Depth where
   texture : Texture
   view    : TextureView
   width   : UInt32
   height  : UInt32
+  scene   : TextureView
+  resolve : BindGroup
 
 /-- What drawing a frame needs, made once. -/
 structure Renderer where
@@ -87,6 +92,10 @@ structure Renderer where
   shaftBlendLayout : BindGroupLayout
   shaftBlendData   : IO.Ref (Option BindGroup)
   shaftSampler     : Sampler
+  /-- The scene's light made colour for the display, with its bind group's
+  layout (the bind group is made with the scene's target). -/
+  resolve       : RenderPipeline
+  resolveLayout : BindGroupLayout
   /-- The surface's grid, indexed, and how many indices. -/
   surfaceIndices : Buffer
   surfaceCount   : UInt32
@@ -166,7 +175,7 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v w.sunlight 1 ++ v w.skylight 1
     ++ [w.tile, w.loop, w.frames.toFloat, 0]
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
-    ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.texels.toFloat]).foldl
+    ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -241,7 +250,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 3, visibility := .vertex ||| .fragment,
         sampler := { type := .filtering } },
       { binding := 4, visibility := .fragment,
-        texture := { sampleType := .float, viewDimension := .«2d» } },
+        texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 5, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
       { binding := 6, visibility := .fragment,
@@ -260,7 +269,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
-  let surface ← pipeline device "surface" layout surfaceModule format
+  let surface ← pipeline device "surface" layout surfaceModule sceneFormat
   -- The shafts: the frame's bind group, and the scene's depth in a second.
   let shaftLayout ← device.createBindGroupLayout {
     label   := "shafts"
@@ -297,22 +306,47 @@ def Renderer.create (device : Device) (format : TextureFormat)
     fragment := some {
       module     := shaftBlendModule
       entryPoint := some "fs"
-      targets    := #[{ format := format, blend := some addBlend }]
+      targets    := #[{ format := sceneFormat, blend := some addBlend }]
     }
   }
   let shaftSampler ← device.createSampler (some {
     label := "shafts", addressModeU := .clampToEdge, addressModeV := .clampToEdge,
     magFilter := .linear, minFilter := .linear })
+  let resolveLayout ← device.createBindGroupLayout {
+    label   := "resolve"
+    entries := #[{ binding := 0, visibility := .fragment,
+                   texture := { sampleType := .unfilterableFloat, viewDimension := .«2d» } }]
+  }
+  let resolvePipelineLayout ← device.createPipelineLayout {
+    label := "resolve", bindGroupLayouts := #[frameLayout, resolveLayout] }
+  let resolveModule ← createShader device "resolve" (shared ++ Shaders.resolve)
+  let resolve ← device.createRenderPipeline {
+    label    := "resolve"
+    layout   := some resolvePipelineLayout
+    vertex   := { module := resolveModule, entryPoint := some "vs" }
+    fragment := some {
+      module     := resolveModule
+      entryPoint := some "fs"
+      targets    := #[{ format := format }]
+    }
+    -- In the pass the overlay's text is drawn in, which has the depth
+    -- buffer: neither tested nor written here.
+    depthStencil := some {
+      format            := depthFormat
+      depthWriteEnabled := .false
+      depthCompare      := .always
+    }
+  }
   let surfaceLattice := latticeIndices water.surfaceGrid
   let surfaceIndices ← createBuffer device "surface grid" .index
     (surfaceLattice.foldl pushU32 ByteArray.empty)
-  let backdrop ← pipeline device "water" layout waterModule format
+  let backdrop ← pipeline device "water" layout waterModule sceneFormat
     (depthCompare := .always) (depthWrite := false)
-  let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
-  let sandWire ← pipeline device "sand wire" layout sandModule format
+  let sand ← pipeline device "sand" layout sandModule sceneFormat #[latticeLayout]
+  let sandWire ← pipeline device "sand wire" layout sandModule sceneFormat
     #[latticeLayout] (fragment := "fs_wire")
     (depthCompare := .lessEqual) (depthWrite := false) (blend := some overBlend)
-  let grid ← pipeline device "grid" layout gridModule format
+  let grid ← pipeline device "grid" layout gridModule sceneFormat
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
     (frameBytes Mat4.identity Camera.initial 1 1 1 1 0 {} floor floor.cells
@@ -338,7 +372,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   return {
     device, format, backdrop, surface, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
-    shaftSampler
+    shaftSampler, resolve, resolveLayout
     shaftData      := ← IO.mkRef none
     shaftTarget    := ← IO.mkRef none
     shaftBlendData := ← IO.mkRef none
@@ -372,7 +406,20 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
     size   := { width, height }
     format := depthFormat
   }
-  let d : Depth := { texture, view := ← texture.createView none, width, height }
+  let sceneTexture ← r.device.createTexture {
+    label  := "scene"
+    usage  := .renderAttachment ||| .textureBinding
+    size   := { width, height }
+    format := sceneFormat
+  }
+  let scene ← sceneTexture.createView none
+  let resolve ← r.device.createBindGroup {
+    label   := "resolve"
+    layout  := r.resolveLayout
+    entries := #[{ binding := 0, textureView := some scene }]
+  }
+  let d : Depth := { texture, view := ← texture.createView none, width, height,
+                     scene, resolve }
   r.depth.set (some d)
   -- The shafts read it: their bind group made for it; and their target,
   -- half its size, with the bind group that reads that.
@@ -443,10 +490,11 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   -- caustics' loop is at.
   let loop := app.water.loop
   r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
-  -- The scene: the water behind, the sand, the surface; its depth kept.
+  -- The scene, in light: the water behind, the sand, the surface; its
+  -- depth kept.
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{
-      view       := some view
+      view       := some depth.scene
       loadOp     := .clear
       storeOp    := .store
       clearValue := { r := 0, g := 0, b := 0, a := 1 }
@@ -481,22 +529,22 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     pass.draw 3 1 0 0
     pass.«end»
     let pass ← encoder.beginRenderPass {
-      colorAttachments := #[{ view := some view, loadOp := .load, storeOp := .store }]
+      colorAttachments := #[{ view := some depth.scene, loadOp := .load, storeOp := .store }]
     }
     pass.setBindGroup 0 (some r.data) #[]
     pass.setBindGroup 1 (some blendData) #[]
     pass.setPipeline r.shaftBlend
     pass.draw 3 1 0 0
     pass.«end»
-  -- The overlays, over it all, against the scene's depth.
+  -- The development overlays, in light too, against the scene's depth.
   let pass ← encoder.beginRenderPass {
-    colorAttachments := #[{ view := some view, loadOp := .load, storeOp := .store }]
+    colorAttachments := #[{ view := some depth.scene, loadOp := .load, storeOp := .store }]
     depthStencilAttachment := some {
       view            := depth.view
       depthLoadOp     := .load
       depthStoreOp    := .discard
+      depthClearValue := some 1
     }
-    timestampWrites := Timing.endsFor r.timing 0
   }
   pass.setBindGroup 0 (some r.data) #[]
   if app.overlays.wireframe then
@@ -505,6 +553,22 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   if app.overlays.grid then
     pass.setPipeline r.grid
     pass.draw 6 1 0 0
+  pass.«end»
+  -- The light made colour, into the target; the text over that.
+  let pass ← encoder.beginRenderPass {
+    colorAttachments := #[{ view := some view, loadOp := .clear, storeOp := .store }]
+    depthStencilAttachment := some {
+      view            := depth.view
+      depthLoadOp     := .clear
+      depthStoreOp    := .discard
+      depthClearValue := some 1
+    }
+    timestampWrites := Timing.endsFor r.timing 0
+  }
+  pass.setBindGroup 0 (some r.data) #[]
+  pass.setBindGroup 1 (some depth.resolve) #[]
+  pass.setPipeline r.resolve
+  pass.draw 3 1 0 0
   r.overlay.draw pass app.width app.height
   pass.«end»
   let timed ← match r.timing with

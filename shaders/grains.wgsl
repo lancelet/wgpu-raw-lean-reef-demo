@@ -22,7 +22,9 @@
 struct Bake {
   // The tile's texels a side; a grain's diameter, and a fragment's, in
   // texels; how many of the fragments' cells hold one, 0 to 1.
-  grain : vec4f,
+  grain  : vec4f,
+  // Whether this layer has the traces (1) or not (0); y, z, w unused.
+  traces : vec4f,
 }
 
 @group(0) @binding(0) var<uniform> bake : Bake;
@@ -158,10 +160,13 @@ fn tracesAt(p : vec2f) -> vec2f {
   var shade = 1.0;
   // In patches: here many, there none, a field of noise over the tile
   // saying which, three features across it; each kind its own.
+  // Patches of a few centimetres, and most of the tile with none at
+  // all: where the noise is above a threshold only, and more the
+  // higher it is.
   let uv = p / texels * 3.0;
-  let holesHere = smoothstep(-0.3, 0.4, noise(uv + 2.0, 3));
-  let castsHere = smoothstep(-0.2, 0.5, noise(uv + 23.0, 3));
-  let scrapesHere = smoothstep(-0.3, 0.4, noise(uv + 41.0, 3));
+  let holesHere = smoothstep(0.1, 0.5, noise(uv + 2.0, 3));
+  let castsHere = smoothstep(0.15, 0.55, noise(uv + 23.0, 3));
+  let scrapesHere = smoothstep(0.1, 0.5, noise(uv + 41.0, 3));
   // Holes, in cells of forty grains, one to a third of them.
   let holeCells = i32(round(texels / (grain * 40.0)));
   let holeCell = texels / f32(holeCells);
@@ -254,7 +259,8 @@ fn surfaceAt(p : vec2f) -> vec2f {
   if (fragments.x > 0.0) { fragments.x += bake.grain.y * 0.5; }
   let uneven = unevenness(p);
   let surface = select(grains, fragments, fragments.x > grains.x);
-  let traces = tracesAt(p);
+  var traces = tracesAt(p);
+  if (bake.traces.x < 0.5) { traces = vec2f(0.0, 1.0); }
   return vec2f(surface.x + uneven * bake.grain.y + traces.x,
                surface.y * (1.0 + 0.2 * uneven) * traces.y);
 }

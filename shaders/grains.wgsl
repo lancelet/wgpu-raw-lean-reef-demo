@@ -145,9 +145,87 @@ fn bedAt(p : vec2f, cell : f32, n : i32, perCell : u32, radius : f32,
   return best;
 }
 
+// The traces of what lives in the sand, at `p`, in texels: what they add
+// to the height, and how they shade. Holes, a few millimetres across,
+// each with a rim of what was dug out, dark within; castings, the coils
+// a worm leaves, a chain of little mounds along a curve; and scrapes,
+// short shallow grooves. Each scattered sparsely over cells of its own
+// grid, repeating with the tile.
+fn tracesAt(p : vec2f) -> vec2f {
+  let texels = bake.grain.x;
+  let grain = bake.grain.y;
+  var height = 0.0;
+  var shade = 1.0;
+  // Holes, in cells of fifteen grains, one to a quarter of them.
+  let holeCells = i32(round(texels / (grain * 15.0)));
+  let holeCell = texels / f32(holeCells);
+  var base = vec2i(floor(p / holeCell));
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let c = base + vec2i(i, j);
+      let seed = cellSeed(c, holeCells, 0x4u);
+      if (rand(seed, 0u) >= 0.25) { continue; }
+      let centre = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * holeCell;
+      let r = grain * (3.0 + 4.0 * rand(seed, 3u));
+      let d = length(p - centre) / r;
+      if (d < 1.0) {
+        height -= grain * 2.0 * (1.0 - d * d);
+        shade *= 0.55 + 0.45 * d;
+      } else if (d < 1.8) {
+        height += grain * 0.8 * (1.0 - abs(d - 1.4) / 0.4);
+      }
+    }
+  }
+  // Castings, in cells of thirty grains, one to a fifth: eight mounds
+  // along a curve that turns as it goes.
+  let castCells = i32(round(texels / (grain * 30.0)));
+  let castCell = texels / f32(castCells);
+  base = vec2i(floor(p / castCell));
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let c = base + vec2i(i, j);
+      let seed = cellSeed(c, castCells, 0x5u);
+      if (rand(seed, 0u) >= 0.2) { continue; }
+      var at = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * castCell;
+      var angle = tau * rand(seed, 3u);
+      let turn = 0.9 * (rand(seed, 4u) - 0.5);
+      let r = grain * 1.6;
+      for (var k = 0u; k < 8u; k++) {
+        let d = length(p - at) / r;
+        if (d < 1.0) { height = max(height, grain * 1.2 * sqrt(1.0 - d * d)); }
+        angle += turn + 0.6 * (rand(seed, 5u + k) - 0.5);
+        at += vec2f(cos(angle), sin(angle)) * r * 1.4;
+      }
+    }
+  }
+  // Scrapes, in cells of twenty grains, one to a sixth: a groove along a
+  // short line, a grain deep.
+  let scrapeCells = i32(round(texels / (grain * 20.0)));
+  let scrapeCell = texels / f32(scrapeCells);
+  base = vec2i(floor(p / scrapeCell));
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let c = base + vec2i(i, j);
+      let seed = cellSeed(c, scrapeCells, 0x6u);
+      if (rand(seed, 0u) >= 0.17) { continue; }
+      let centre = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * scrapeCell;
+      let angle = tau * rand(seed, 3u);
+      let along = vec2f(cos(angle), sin(angle));
+      let half = grain * (6.0 + 8.0 * rand(seed, 4u));
+      let d = p - centre;
+      let u = clamp(dot(d, along), -half, half);
+      let off = length(d - along * u) / (grain * 1.2);
+      let end = 1.0 - smoothstep(0.7, 1.0, abs(dot(d, along)) / half);
+      if (off < 1.0) { height -= grain * (1.0 - off * off) * end; }
+    }
+  }
+  return vec2f(height, shade);
+}
+
 // The grains' surface at `p`, in texels: the bed of grains, and the
 // fragments lying on it, in height (texels) and brightness; the bed on
-// its unevenness, a grain's diameter of it, darker in the hollows.
+// its unevenness, a grain's diameter of it, darker in the hollows; and
+// the traces of what lives in it.
 fn surfaceAt(p : vec2f) -> vec2f {
   let texels = bake.grain.x;
   // The grains' cells a grain and a half wide, two grains to each, so
@@ -160,7 +238,7 @@ fn surfaceAt(p : vec2f) -> vec2f {
   let fragmentCells = i32(round(texels / bake.grain.z));
   let fragmentCell = texels / f32(fragmentCells);
   let fine = bedAt(p, grainCell, grainCells, 2u, 0.4, 3.0, 1.0, 0.2, 1.0, 0x1u);
-  let coarse = bedAt(p, coarseCell, coarseCells, 1u, 0.4, 2.0, 0.9, 0.3, 0.3, 0x3u);
+  let coarse = bedAt(p, coarseCell, coarseCells, 1u, 0.45, 2.5, 0.9, 0.3, 0.5, 0x3u);
   let grains = select(fine, coarse, coarse.x > fine.x);
   var fragments = bedAt(p, fragmentCell, fragmentCells, 1u, 0.4, 2.0, 0.3, 0.5,
                         bake.grain.w, 0x2u);
@@ -168,8 +246,9 @@ fn surfaceAt(p : vec2f) -> vec2f {
   if (fragments.x > 0.0) { fragments.x += bake.grain.y * 0.5; }
   let uneven = unevenness(p);
   let surface = select(grains, fragments, fragments.x > grains.x);
-  return vec2f(surface.x + uneven * bake.grain.y,
-               surface.y * (1.0 + 0.2 * uneven));
+  let traces = tracesAt(p);
+  return vec2f(surface.x + uneven * bake.grain.y + traces.x,
+               surface.y * (1.0 + 0.2 * uneven) * traces.y);
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {

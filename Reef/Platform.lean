@@ -32,6 +32,10 @@ structure Options where
   /-- Where the sun is, if said: round from the x axis, and up from the
   horizon, in degrees. -/
   sun        : Option (Float × Float) := none
+  /-- The wind over the sea, in metres a second, and the water's depth,
+  in metres, if said. -/
+  wind       : Option Float := none
+  depth      : Option Float := none
   /-- The floor's relief, as a factor of its design, if said. -/
   relief     : Option Float := none
   /-- The ripples' height, as a factor of their design, if said. -/
@@ -50,7 +54,8 @@ def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
     [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
     [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR] \
-    [--waves DEGREES] [--tile FILE] [--grain-tile FILE] [--caustic-tile FILE]"
+    [--waves DEGREES] [--wind SPEED] [--depth METRES] [--tile FILE] \
+    [--grain-tile FILE] [--caustic-tile FILE]"
 
 /-- `s` as a switch, if it is one. -/
 def parseSwitch (s : String) : Option Bool :=
@@ -83,6 +88,12 @@ def Options.parse : List String → Except String Options
     let some [x, y, z, yaw, pitch] := (spec.splitOn ",").mapM parseFloat
       | throw s!"not a camera: {spec} (X,Y,Z,YAW,PITCH)"
     return { ← Options.parse rest with camera := some (x, y, z, yaw, pitch) }
+  | "--wind" :: speed :: rest => do
+    let some speed := parseFloat speed | throw s!"not a speed: {speed}"
+    return { ← Options.parse rest with wind := some speed }
+  | "--depth" :: metres :: rest => do
+    let some metres := parseFloat metres | throw s!"not a depth: {metres}"
+    return { ← Options.parse rest with depth := some metres }
   | "--sun" :: spec :: rest => do
     let some [azimuth, elevation] := (spec.splitOn ",").mapM parseFloat
       | throw s!"not a sun: {spec} (AZIMUTH,ELEVATION, in degrees)"

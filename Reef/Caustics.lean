@@ -25,10 +25,13 @@ namespace Reef
 def causticFormat : TextureFormat := .rgba8Unorm
 
 /-- The caustics, baked: the texture array, and its view of every layer
-and level, for the sand. -/
+and level, for the sand; and the sea's surface at the last moment baked,
+the height and the slopes at each point of its grid, for looking at. -/
 structure Caustics where
   texture : Texture
   view    : TextureView
+  field   : Buffer
+  points  : Nat
 
 /-- The sea's uniforms, as `shaders/ocean.wgsl` lays out `Sea`: 48
 bytes, for the moment `time` and the field `component`. -/
@@ -73,7 +76,8 @@ def Caustics.bake (device : Device) (water : Water) : IO Caustics := do
       { label := "sea transform", size := complexes, usage := .storage }
     | throw (IO.userError "no buffer for the sea")
   let some field ← device.createBuffer
-      { label := "sea surface", size := (n * n * 16).toUInt64, usage := .storage }
+      { label := "sea surface", size := (n * n * 16).toUInt64,
+        usage := .storage ||| .copySrc }
     | throw (IO.userError "no buffer for the sea")
   let oceanModule ← createShader device "ocean" Shaders.ocean
   -- One layout for the three kernels, which use the buffers between them
@@ -213,6 +217,7 @@ def Caustics.bake (device : Device) (water : Water) : IO Caustics := do
       }
       drawInto encoder mips data (← layerView texture frame level)
     queue.submit #[← encoder.finish none]
-  return { texture, view := ← texture.createView (some { dimension := .«2dArray» }) }
+  return { texture, field, points := n
+           view := ← texture.createView (some { dimension := .«2dArray» }) }
 
 end Reef

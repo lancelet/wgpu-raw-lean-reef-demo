@@ -1,7 +1,6 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
-import Reef.Bubbles
 import Reef.Caustics
 import Reef.Grains
 import Reef.Ripples
@@ -82,7 +81,6 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
-  bubbles  : Bubbles
   shafts   : RenderPipeline
   /-- The shafts' second bind group, the scene's depth: made with the
   depth buffer; their target, half the scene's size, made with it too;
@@ -125,10 +123,8 @@ structure Renderer where
   overlay  : Overlay
   /-- The frame's time on the GPU, if the device can stamp it. -/
   timing   : Option Timing
-  /-- Frames drawn, for the timing's ring; and the last frame's time, for
-  the bubbles' step. -/
+  /-- Frames drawn, for the timing's ring. -/
   frames   : IO.Ref Nat
-  lastTime : IO.Ref Float
 
 /-- The camera's field of view, up and down, in radians: 60 degrees. -/
 def fovY : Float := 1.0472
@@ -276,7 +272,6 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
-  let bubbles ← Bubbles.create device water shared frameLayout sceneFormat depthFormat
   let surface ← pipeline device "surface" layout surfaceModule sceneFormat
   -- The shafts: the frame's bind group, and the scene's depth in a second.
   let shaftLayout ← device.createBindGroupLayout {
@@ -378,7 +373,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     ]
   }
   return {
-    device, format, backdrop, surface, bubbles, surfaceIndices, shafts, shaftLayout, sand,
+    device, format, backdrop, surface, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
     shaftSampler, resolve, resolveLayout
     shaftData      := ← IO.mkRef none
@@ -394,7 +389,6 @@ def Renderer.create (device : Device) (format : TextureFormat)
     overlay := ← Overlay.create device format depthFormat
     timing  := ← Timing.create device timestamps passes.size
     frames  := ← IO.mkRef 0
-    lastTime := ← IO.mkRef 0
   }
 
 /-- The floor's mesh made again, for `floor` as it is now: its patch; the
@@ -499,11 +493,6 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   -- caustics' loop is at.
   let loop := app.water.loop
   r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
-  -- The bubbles, a step on.
-  let last ← r.lastTime.get
-  r.lastTime.set app.time
-  r.bubbles.step r.queue encoder r.data (min 0.1 (max 0 (app.time - last)))
-    app.water.bubbleReach app.time
   -- The scene, in light: the water behind, the sand, the surface; its
   -- depth kept.
   let pass ← encoder.beginRenderPass {
@@ -529,7 +518,6 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.setPipeline r.surface
   pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)
   pass.drawIndexed r.surfaceCount 1 0 0 0
-  r.bubbles.draw pass
   pass.«end»
   -- The light in the water, at half size, reading the scene's depth;
   -- then added over the scene, smoothed.

@@ -216,8 +216,8 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     size   := { width, height }
     format := screenshotFormat
   }
-  -- Some seconds of frames first, for what evolves (the bubbles rise,
-  -- the caustics' loop and the swell are at the moment): then the overlay
+  -- Some seconds of frames first, for what evolves (the caustics' loop
+  -- and the swell are at the moment): then the overlay
   -- too, with the camera's line and the patches drawn, how the text
   -- looks.
   for i in [0:warmFrames] do

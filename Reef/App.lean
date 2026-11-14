@@ -231,8 +231,8 @@ structure Water where
   tile          : Float := 8
   wind          : Float := 4.0
   windDirection : Float := 0.5
-  amplitude     : Float := 0.0006
-  shortest      : Float := 0.06
+  amplitude     : Float := 0.0008
+  shortest      : Float := 0.12
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
   side; the grid of the surface drawn into each, quads a side, and its

@@ -232,7 +232,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
-  let sand = vec3f(0.55, 0.47, 0.30) * mix(1.0, 2.0 * grain.a, frame.grain.z);
+  let sand = vec3f(0.64, 0.42, 0.18) * mix(1.0, 2.0 * grain.a, frame.grain.z);
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point
   // meets the surface, so that they drift down the sun's slant).

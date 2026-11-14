@@ -82,7 +82,7 @@ structure Floor where
 /-- How far above and below 0 the floor may reach, for culling: the
 height's octaves' amplitudes summed, and some; the sand waves' and
 hummocks' are not scaled by the amplitude. -/
-def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude + 0.15
+def Floor.relief (f : Floor) : Float := 1.7 * f.amplitude + 0.2
 
 /-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
 stays the width it is; its cells get finer. -/
@@ -203,14 +203,17 @@ structure Water where
   /-- The surface's height above the floor's zero, in metres. -/
   depth      : Float := 4
   /-- How fast the water takes red, green and blue, per metre. -/
-  extinction : Vec3  := ⟨0.13, 0.045, 0.03⟩
-  /-- Its colour seen level, far off; up, toward the surface; down. -/
-  horizon    : Vec3  := ⟨0.06, 0.42, 0.50⟩
-  zenith     : Vec3  := ⟨0.30, 0.72, 0.80⟩
-  deep       : Vec3  := ⟨0.02, 0.18, 0.26⟩
-  /-- The sun's light at the floor, and the sky's from all above. -/
-  sunlight   : Vec3  := ⟨1.05, 0.92, 0.70⟩
-  skylight   : Vec3  := ⟨0.18, 0.30, 0.33⟩
+  extinction : Vec3  := ⟨0.07, 0.04, 0.03⟩
+  /-- Its colour seen level, far off; up, toward the surface; down: a deep
+  saturated teal, dark against the sand, as a photograph exposed for the
+  sand has it. -/
+  horizon    : Vec3  := ⟨0.0, 0.07, 0.105⟩
+  zenith     : Vec3  := ⟨0.0, 0.16, 0.24⟩
+  deep       : Vec3  := ⟨0.0, 0.028, 0.048⟩
+  /-- The sun's light at the floor, warm, and the sky's from all above,
+  dim and blue. -/
+  sunlight   : Vec3  := ⟨1.65, 1.3, 0.9⟩
+  skylight   : Vec3  := ⟨0.07, 0.13, 0.17⟩
   /-- The caustics' strength, 0 none to 1 as the surface makes them. -/
   focus      : Float := 1
   /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,

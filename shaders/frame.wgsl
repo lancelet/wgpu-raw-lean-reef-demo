@@ -97,18 +97,20 @@ fn noise(p : vec2f) -> f32 {
 }
 
 // The floor's height at `xz`, in the world: the large-scale elevation,
-// three octaves of noise, from fifty metres across to five, about a metre
-// of relief in all at an amplitude of 1; and on that the sand waves and
-// hummocks, a couple of metres across and under one, a few centimetres
-// high, the waves drawn out along the ripples' crests (across the
-// waves' direction), as sand waves lie (`Reef.Floor.relief` bounds the
-// whole). The ripples are on top of this (`shaders/sand.wgsl`).
+// four octaves of noise, from fifty metres across to two and a half, the
+// mounds and hollows of a back-reef's sand, a metre and a half of relief
+// in all at an amplitude of 1; and on that the sand waves and hummocks,
+// a couple of metres across and under one, some centimetres high, the
+// waves drawn out along the ripples' crests (across the waves'
+// direction), as sand waves lie (`Reef.Floor.relief` bounds the whole).
+// The ripples are on top of this (`shaders/sand.wgsl`).
 fn height(xz : vec2f) -> f32 {
   let dir = frame.ripple.xy;
   let along = vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x)));
-  return frame.floor.w * (0.6 * noise(xz / 40.0) + 0.3 * noise(xz / 13.0 + 7.0)
-                          + 0.1 * noise(xz / 5.0 + 3.0))
-       + 0.06 * noise(along / vec2f(1.6, 3.2) + 5.0)
+  return frame.floor.w * (0.6 * noise(xz / 40.0) + 0.45 * noise(xz / 13.0 + 7.0)
+                          + 0.25 * noise(xz / 5.0 + 3.0)
+                          + 0.12 * noise(xz / 2.5 + 11.0))
+       + 0.1 * noise(along / vec2f(1.6, 3.2) + 5.0)
        + 0.025 * noise(xz / 0.7 + 9.0);
 }
 

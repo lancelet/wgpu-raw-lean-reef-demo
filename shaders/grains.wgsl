@@ -5,12 +5,14 @@
 // between grains, which see less light, and on dark grains, brighter on
 // shell. `shaders/sand.wgsl` reads them.
 //
-// The grains are spheres, one to each cell of a grid a grain's diameter
-// wide, placed at random in its cell, of a radius a little more or less
-// than the grain's: the surface is the highest of them at each point,
-// a packed bed. Among them, fragments (shell and the like): flatter
-// domes, bigger, one to some of the cells of a coarser grid, lying on
-// the bed. The bed itself rises and falls a little over a few
+// The grains are spheres, a couple to each cell of a grid a grain and a
+// half wide, placed at random in it, of sizes spread three to one about
+// the grain's, most in the middle (a reef's sand is poorly sorted, being
+// broken shell and coral): the surface is the highest of them at each
+// point, a packed bed. Among them, coarse grains, a few times the size,
+// here and there; and fragments (shell and the like): flatter domes,
+// bigger still, one to some of the cells of a coarser grid, lying on the
+// bed. The bed itself rises and falls a little over a few
 // millimetres, the sand's own unevenness between the grains and the
 // ripples, which shows as roughness from a metre or two off, where the
 // grains themselves have averaged away; and is a little darker in its
@@ -101,36 +103,42 @@ fn brightnessOf(seed : u32, fragment : bool) -> f32 {
   return 0.4 + 0.3 * rand(seed, 4u);
 }
 
-// The surface of a bed of domes at `p`, in texels: the domes one to each
-// cell of a grid of cells `cell` texels wide, `n` across the tile, each
-// placed at random in its cell, of radius `radius` of the cell, give or
-// take `vary` of it, `squash` as high as it is wide (1 a sphere), drawn
-// out along a direction of its own by up to `stretch` (0 round), one to
-// a cell with chance `chance`; seeds salted by `salt`. The height, in
-// texels, of the highest dome at `p` (0 off them all), and its
-// brightness (the gaps' if none).
-fn bedAt(p : vec2f, cell : f32, n : i32, radius : f32, vary : f32,
-         squash : f32, stretch : f32, chance : f32, salt : u32) -> vec2f {
+// The surface of a bed of domes at `p`, in texels: the domes `perCell`
+// to each cell of a grid of cells `cell` texels wide, `n` across the
+// tile, each placed at random in its cell, of radius `radius` of the
+// cell at the middle of a spread of sizes `spread` to 1 from smallest to
+// largest (most in the middle, a few at the ends: the sand's sorting,
+// poor for a reef's broken shell and coral), `squash` as high as it is
+// wide (1 a sphere), drawn out along a direction of its own by up to
+// `stretch` (0 round), each there with chance `chance`; seeds salted by
+// `salt`. The height, in texels, of the highest dome at `p` (0 off them
+// all), and its brightness (the gaps' if none).
+fn bedAt(p : vec2f, cell : f32, n : i32, perCell : u32, radius : f32,
+         spread : f32, squash : f32, stretch : f32, chance : f32,
+         salt : u32) -> vec2f {
   let base = vec2i(floor(p / cell));
   var best = vec2f(0.0, 0.2);
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let c = base + vec2i(i, j);
-      let seed = cellSeed(c, n, salt);
-      if (rand(seed, 5u) >= chance) { continue; }
-      let centre = (vec2f(c) + vec2f(rand(seed, 0u), rand(seed, 1u))) * cell;
-      let r = cell * (radius + vary * (rand(seed, 2u) - 0.5));
-      // Narrowed across its own direction: an ellipse, of the radius
-      // along it.
-      let angle = tau * rand(seed, 6u);
-      let along = vec2f(cos(angle), sin(angle));
-      let narrow = 1.0 / (1.0 - stretch * rand(seed, 7u));
-      let d = p - centre;
-      let e = vec2f(dot(d, along), dot(d, vec2f(-along.y, along.x)) * narrow);
-      let under = r * r - dot(e, e);
-      if (under > 0.0) {
-        let h = squash * sqrt(under);
-        if (h > best.x) { best = vec2f(h, brightnessOf(seed, salt == 0x2u)); }
+      for (var k = 0u; k < perCell; k++) {
+        let seed = cellSeed(c, n, salt + k * 0x9e3779b9u);
+        if (rand(seed, 5u) >= chance) { continue; }
+        let centre = (vec2f(c) + vec2f(rand(seed, 0u), rand(seed, 1u))) * cell;
+        // Two draws summed: a peak in the middle, in the log of the size.
+        let r = cell * radius * pow(spread, 0.5 * (rand(seed, 2u) + rand(seed, 8u) - 1.0));
+        // Narrowed across its own direction: an ellipse, of the radius
+        // along it.
+        let angle = tau * rand(seed, 6u);
+        let along = vec2f(cos(angle), sin(angle));
+        let narrow = 1.0 / (1.0 - stretch * rand(seed, 7u));
+        let d = p - centre;
+        let e = vec2f(dot(d, along), dot(d, vec2f(-along.y, along.x)) * narrow);
+        let under = r * r - dot(e, e);
+        if (under > 0.0) {
+          let h = squash * sqrt(under);
+          if (h > best.x) { best = vec2f(h, brightnessOf(seed, salt == 0x2u)); }
+        }
       }
     }
   }
@@ -142,15 +150,22 @@ fn bedAt(p : vec2f, cell : f32, n : i32, radius : f32, vary : f32,
 // its unevenness, a grain's diameter of it, darker in the hollows.
 fn surfaceAt(p : vec2f) -> vec2f {
   let texels = bake.grain.x;
-  let grainCells = i32(round(texels / bake.grain.y));
+  // The grains' cells a grain and a half wide, two grains to each, so
+  // that their spacing is no lattice; the coarse grains' cells three
+  // wide, one to some; the fragments' a fragment wide, one to a few.
+  let grainCells = i32(round(texels / (bake.grain.y * 1.5)));
   let grainCell = texels / f32(grainCells);
+  let coarseCells = i32(round(texels / (bake.grain.y * 3.0)));
+  let coarseCell = texels / f32(coarseCells);
   let fragmentCells = i32(round(texels / bake.grain.z));
   let fragmentCell = texels / f32(fragmentCells);
-  let grains = bedAt(p, grainCell, grainCells, 0.58, 0.24, 1.0, 0.2, 1.0, 0x1u);
-  var fragments = bedAt(p, fragmentCell, fragmentCells, 0.4, 0.2, 0.3, 0.5,
+  let fine = bedAt(p, grainCell, grainCells, 2u, 0.4, 3.0, 1.0, 0.2, 1.0, 0x1u);
+  let coarse = bedAt(p, coarseCell, coarseCells, 1u, 0.4, 2.0, 0.9, 0.3, 0.3, 0x3u);
+  let grains = select(fine, coarse, coarse.x > fine.x);
+  var fragments = bedAt(p, fragmentCell, fragmentCells, 1u, 0.4, 2.0, 0.3, 0.5,
                         bake.grain.w, 0x2u);
   // A fragment lies on the bed, a grain's height up.
-  if (fragments.x > 0.0) { fragments.x += grainCell * 0.5; }
+  if (fragments.x > 0.0) { fragments.x += bake.grain.y * 0.5; }
   let uneven = unevenness(p);
   let surface = select(grains, fragments, fragments.x > grains.x);
   return vec2f(surface.x + uneven * bake.grain.y,

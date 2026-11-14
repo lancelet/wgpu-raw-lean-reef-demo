@@ -159,11 +159,11 @@ structure Grains where
   /-- The tile's texels a side: a power of two. -/
   texels    : Nat   := 1024
   /-- A grain's diameter, in metres. -/
-  grain     : Float := 0.0004
+  grain     : Float := 0.0005
   /-- A fragment's diameter, in metres, and how many of the fragments'
   cells (a diameter wide) hold one, 0 none to 1 all. -/
-  fragment  : Float := 0.002
-  fragments : Float := 0.08
+  fragment  : Float := 0.003
+  fragments : Float := 0.12
   /-- How much the grains tilt the normal, and speckle the colour: 1 as
   designed, 0 none. -/
   relief    : Float := 1

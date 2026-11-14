@@ -65,7 +65,7 @@ fn placed(i : u32) -> Mote {
   let which = rand(seed, 6u);
   var shell = pool.reach;
   var scale = 1.6;
-  if (which < 0.5) { shell = pool.reach * 0.25; scale = 0.6; }
+  if (which < 0.5) { shell = pool.reach * 0.25; scale = 0.4; }
   else if (which < 0.83) { shell = pool.reach * 0.5; scale = 1.0; }
   let xz = frame.camera.xz + (vec2f(rand(seed, 0u), rand(seed, 1u)) - 0.5) * 2.0 * shell;
   let lowest = max(frame.camera.y - shell, 0.0);
@@ -132,7 +132,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let view = relative / dist;
   // Out of focus close to the camera: a soft disc up to a few
   // millimetres wide, faint (the film's motes are never lens dust).
-  let blur = smoothstep(0.5, 0.08, dist) * 0.003;
+  let blur = smoothstep(0.5, 0.08, dist) * 0.0012;
   let size = m.radius + blur;
   // Never under a few pixels, a soft glow rather than a speck; fainter by
   // as much as it is drawn bigger than it is.
@@ -192,7 +192,10 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   // Fainter the farther: what is far is many flecks to a pixel's
   // sight of the water, not a point.
   out.alpha = clamp(coverage * 1.5, 0.1, 0.8) * edge * smoothstep(0.05, 0.12, dist)
-    * (1.0 - 0.5 * smoothstep(1.5, 6.0, dist)) * drifts;
+    * (1.0 - 0.5 * smoothstep(1.5, 6.0, dist)) * drifts
+    // And fainter the larger it looks: a mote filling many pixels is a
+    // haze, not a solid disc.
+    / (1.0 + max(2.0 * drawn / (dist * frame.camera.w) - 5.0, 0.0) * 0.12);
   return out;
 }
 

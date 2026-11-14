@@ -265,7 +265,12 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // the swell has carried the chop there from: the caustics slide with
   // each wave.
   var onSurface = world.xz + sun.xz * toSurface;
-  onSurface -= swellDriftAt(onSurface, frame.screen.z);
+  // And where the swell has carried the chop there from, and how the
+  // swell's own tilt and curvature bend and gather the light on its way
+  // down: a shift of the pattern, and a few percent of brightness, a
+  // slow pulse in time with the heave.
+  let bending = swellBending(onSurface, frame.screen.z, toSurface);
+  onSurface -= swellDriftAt(onSurface, frame.screen.z) + bending.xy;
   // The caustics' loop at this moment: the layer, and the next, blended;
   // blurred at least by the sun's own width, half a degree of sky, over
   // the water the light has come down through.
@@ -283,7 +288,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
-  let focus = mix(vec3f(1.0), gathered, frame.water.y);
+  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z;
   let light = frame.skylight.rgb * cavity
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;

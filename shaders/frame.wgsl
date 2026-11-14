@@ -103,15 +103,43 @@ fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
   return vec4f(amplitude, k, phase, 0.0);
 }
 
-fn swellAt(xz : vec2f, t : f32) -> vec3f {
-  var height = 0.0;
-  var slope = vec2f(0.0);
+// The swell at `xz` (the water's resting place) and `t`, as Gerstner
+// has it: the water goes round in orbits, up and down and to and fro,
+// so the surface's points move sideways too, which crowds the crests
+// into narrow ridges and spreads the troughs flat. The height; the
+// sideways reach, in metres (the orbit's, the amplitude over the
+// hyperbolic tangent of the wave number times the depth); the slope of
+// the surface, along x and z; and the curvature across the crests,
+// positive under a crest, which focuses the sun's light a little.
+struct Swell {
+  height    : f32,
+  offset    : vec2f,
+  slope     : vec2f,
+  curvature : f32,
+}
+
+fn swellAt(xz : vec2f, t : f32) -> Swell {
+  var s : Swell;
+  s.height = 0.0;
+  s.offset = vec2f(0.0);
+  s.slope = vec2f(0.0);
+  s.curvature = 0.0;
+  let depth = frame.water.x;
+  // The trochoid's slope: the height's rate against the surface's
+  // sideways motion, summed over the waves as a product would be.
+  var sideways = 1.0;
   for (var i = 0; i < 3; i++) {
     let w = swellWave(i, xz, t);
-    height += w.x * sin(w.z);
-    slope += w.x * w.y * cos(w.z) * swellHeading(i);
+    let heading = swellHeading(i);
+    let reach = w.x / tanh(w.y * depth);
+    s.height += w.x * sin(w.z);
+    s.offset += reach * cos(w.z) * heading;
+    s.slope += w.x * w.y * cos(w.z) * heading;
+    s.curvature += w.x * w.y * w.y * sin(w.z);
+    sideways -= reach * w.y * sin(w.z);
   }
-  return vec3f(height, slope);
+  s.slope = s.slope / max(sideways, 0.3);
+  return s;
 }
 
 // The surge: the water's sway along the floor under the swell at `xz`,
@@ -136,13 +164,21 @@ fn surgeAt(xz : vec2f, t : f32) -> vec2f {
 // depth. The chop rides on the water, so its caustics slide back and
 // forth on the floor with each wave.
 fn swellDriftAt(xz : vec2f, t : f32) -> vec2f {
-  var drift = vec2f(0.0);
-  let depth = frame.water.x;
-  for (var i = 0; i < 3; i++) {
-    let w = swellWave(i, xz, t);
-    drift += w.x / tanh(w.y * depth) * cos(w.z) * swellHeading(i);
-  }
-  return drift;
+  return swellAt(xz, t).offset;
+}
+
+// The swell's bending of the sun's light that comes through at `xz`,
+// at `t`, as it lands `fall` metres below: how far the landing is moved
+// (the surface's tilt bends the ray by its share, a quarter, of the
+// tilt), and how much brighter the light lands (the surface's curvature
+// draws the rays together, under a crest, or apart, in a trough: a few
+// percent at the floor's depth).
+fn swellBending(xz : vec2f, t : f32, fall : f32) -> vec3f {
+  let s = swellAt(xz, t);
+  let bend = 1.0 - 1.0 / 1.333;
+  let shift = s.slope * bend * fall;
+  let focus = 1.0 / max(1.0 - s.curvature * bend * fall, 0.5);
+  return vec3f(shift, focus);
 }
 
 // The sea's surface at `xz`, in the world, between the grid's points,
@@ -159,8 +195,9 @@ fn seaAt(xz : vec2f) -> vec3f {
   let f10 = sea[i00.y * seaPoints + i11.x].xyz;
   let f01 = sea[i11.y * seaPoints + i00.x].xyz;
   let f11 = sea[i11.y * seaPoints + i11.x].xyz;
+  let s = swellAt(xz, frame.screen.z);
   return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y)
-    + swellAt(xz, frame.screen.z);
+    + vec3f(s.height, s.slope);
 }
 
 // The water, looking along `dir` (unit) into it with nothing in the

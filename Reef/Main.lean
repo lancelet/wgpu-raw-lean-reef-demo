@@ -91,7 +91,8 @@ def Options.initial (o : Options) (width height : UInt32) : App :=
     water    := { water with wind  := o.wind.getD water.wind
                              depth := o.depth.getD water.depth }
     overlays := { wireframe := o.wireframe.getD overlays.wireframe
-                  grid      := o.grid.getD overlays.grid }
+                  grid      := o.grid.getD overlays.grid
+                  envelope  := o.envelope.getD overlays.envelope }
     floor    := { floor with amplitude := o.relief.getD floor.amplitude }
     ripples  := { ripples with
                   amplitude := o.ripples.getD ripples.amplitude

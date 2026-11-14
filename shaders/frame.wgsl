@@ -31,7 +31,7 @@ struct Frame {
   swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
   swellK   : vec4f,  // the swell's four waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber)
   reef     : vec4f,  // the reef's field's box: its corner (xyz), a cell's width (Reef.reefOrigin, reefCell)
-  reefDims : vec4f,  // its grid's points along x, y, z; w unused
+  reefDims : vec4f,  // its grid's points along x, y, z; w: 1 to show the bommies' envelope meshes alone
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;

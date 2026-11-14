@@ -178,7 +178,8 @@ the swell, with its waves' wave numbers): 448 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
-    (ripples : Ripples) (grains : Grains) (sun : Sun) (water : Water) :
+    (ripples : Ripples) (grains : Grains) (sun : Sun) (water : Water)
+    (envelope : Bool := false) :
     ByteArray :=
   let light := sun.direction
   let pixel := 2 * tanHalf / max height 1
@@ -208,7 +209,7 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.swellAtWind, w.swellPeriod, w.swellSpread, 0]
     ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList
     ++ [reefOrigin.x, reefOrigin.y, reefOrigin.z, reefCell]
-    ++ (let (nx, ny, nz) := reefDims; [nx.toFloat, ny.toFloat, nz.toFloat, 0])).foldl
+    ++ (let (nx, ny, nz) := reefDims; [nx.toFloat, ny.toFloat, nz.toFloat, if envelope then 1 else 0])).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -577,7 +578,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   r.queue.writeBuffer r.frame 0
     (frameBytes viewProj app.camera (fovY / 2).tan aspect app.width.toFloat
       app.height.toFloat app.time app.grid app.floor floor.cells app.ripples
-      app.grains app.sun app.water)
+      app.grains app.sun app.water app.overlays.envelope)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0

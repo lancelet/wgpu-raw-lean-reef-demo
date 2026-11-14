@@ -174,6 +174,15 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
 }
 
 @fragment fn fs(in : Out) -> Drawn {
+  // The envelope meshes alone (an overlay): each triangle flat, lit by
+  // its own facing, at the mesh's own depth.
+  let facet = normalize(cross(dpdx(in.relative), dpdy(in.relative)));
+  if (frame.reefDims.w > 0.5) {
+    let n = select(facet, -facet, dot(facet, in.relative) > 0.0);
+    let lit = 0.25 + 0.6 * max(dot(n, frame.sun.xyz), 0.0) + 0.15 * max(n.y, 0.0);
+    let tint = vec3f(0.85, 0.62, 0.42) * lit;
+    return Drawn(vec4f(tint, 1.0), in.position.z);
+  }
   // The march: in from the mass's mesh (inflated to hold the rock), along
   // the view, to where the mass less its detail is first under the pixel's
   // footprint, the detail's bands each fading in from two footprints to

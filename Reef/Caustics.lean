@@ -41,11 +41,11 @@ def seaBytes (w : Water) (time : Float) (component : Nat) : ByteArray :=
   [w.wind, w.windDirection.cos, w.windDirection.sin, w.amplitude, w.shortest,
    0, 0, 0].foldl pushF32 bytes
 
-/-- The bake's uniforms, as `shaders/caustics.wgsl` lays out `Bake`: 16
+/-- The bake's uniforms, as `shaders/caustics.wgsl` lays out `Bake`: 32
 bytes. -/
 def causticBakeBytes (w : Water) : ByteArray :=
   let bytes := [w.tile, w.depth].foldl pushF32 ByteArray.empty
-  pushF32 (pushU32 bytes w.grid.toUInt32) w.margin
+  [w.margin, w.dispersion, 0, 0, 0].foldl pushF32 (pushU32 bytes w.grid.toUInt32)
 
 /-- Light added to light: the triangles pile up. -/
 def addBlend : BlendState := {

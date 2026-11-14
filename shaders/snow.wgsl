@@ -130,12 +130,13 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let relative = m.position - frame.camera.xyz;
   let dist = max(length(relative), 1e-3);
   let view = relative / dist;
-  // Out of focus close to the camera: a disc up to a centimetre wide.
-  let blur = smoothstep(0.6, 0.08, dist) * 0.008;
+  // Out of focus close to the camera: a soft disc up to a few
+  // millimetres wide, faint (the film's motes are never lens dust).
+  let blur = smoothstep(0.5, 0.08, dist) * 0.003;
   let size = m.radius + blur;
-  // Never under a pixel and a half; fainter by as much as it is drawn
-  // bigger than it is.
-  let least = dist * frame.camera.w * 1.5;
+  // Never under a few pixels, a soft glow rather than a speck; fainter by
+  // as much as it is drawn bigger than it is.
+  let least = dist * frame.camera.w * 3.0;
   let drawn = max(size, least);
   let coverage = (m.radius * m.radius) / (drawn * drawn);
   let world = relative + (frame.right.xyz * corner.x + frame.up.xyz * corner.y) * drawn;
@@ -164,13 +165,19 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let shade = cloudShade(p, t) * (1.0 - 0.85 * floating);
   let toward = scattered(dot(sun, -view), 0.6) * 4.0 * 3.14159265;
   let sunlit = frame.sunlight.rgb * focus * down * shade * (0.3 + toward);
-  // Its own colour: most a pale grey, some the brown of detritus, some
-  // the green of plankton, a few white (shell, or a crystal).
-  var albedo = vec3f(0.9, 0.9, 0.86);
-  if (m.tint < 0.25) { albedo = vec3f(0.85, 0.7, 0.5); }
-  else if (m.tint < 0.4) { albedo = vec3f(0.62, 0.82, 0.55); }
-  else if (m.tint > 0.93) { albedo = vec3f(1.1, 1.1, 1.1); }
-  let light = (frame.skylight.rgb * 0.9 + sunlit * 1.3) * albedo;
+  // Its own colour, after the film's motes: pale and warm, cream the
+  // most, some a pale olive, some a light tan, a few white; each its own
+  // shade of its kind. The water's colour comes between it and the eye.
+  let tone = 0.85 + 0.3 * fract(m.tint * 13.7);
+  var albedo = vec3f(0.98, 0.92, 0.78);                                       // cream
+  if (m.tint >= 0.5 && m.tint < 0.75) { albedo = vec3f(0.82, 0.88, 0.64); }   // pale olive
+  else if (m.tint >= 0.75 && m.tint < 0.95) { albedo = vec3f(0.9, 0.78, 0.6); } // tan
+  else if (m.tint >= 0.95) { albedo = vec3f(1.05, 1.05, 1.02); }              // white
+  albedo = albedo * tone;
+  // The sky's light by its brightness, not its blue (the water's blue
+  // is the fog's to add, between the fleck and the eye).
+  let skyBright = dot(frame.skylight.rgb, vec3f(0.3, 0.5, 0.2));
+  let light = (vec3f(skyBright) * 1.0 + sunlit * 1.7) * albedo;
   // Fading at the box's sides, where it wraps; and toward the near plane.
   let rel = abs(p.xz - frame.camera.xz);
   let edge = 1.0 - smoothstep(0.75 * m.shell, m.shell, max(rel.x, rel.y));
@@ -184,7 +191,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   out.colour = light;
   // Fainter the farther: what is far is many flecks to a pixel's
   // sight of the water, not a point.
-  out.alpha = clamp(coverage * 1.5, 0.08, 1.0) * edge * smoothstep(0.05, 0.12, dist)
+  out.alpha = clamp(coverage * 1.5, 0.1, 0.8) * edge * smoothstep(0.05, 0.12, dist)
     * (1.0 - 0.5 * smoothstep(1.5, 6.0, dist)) * drifts;
   return out;
 }
@@ -192,6 +199,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let r = length(in.uv);
   if (r > 1.0) { discard; }
-  let a = (1.0 - smoothstep(0.35, 1.0, r)) * in.alpha;
+  // A soft glow: a Gaussian, gone by the quad's edge.
+  let a = (exp(-r * r * 4.0) - 0.018) * in.alpha;
   return vec4f(fogged(in.colour, in.relative) * a, a);
 }

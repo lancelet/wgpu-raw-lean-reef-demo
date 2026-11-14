@@ -19,7 +19,8 @@ does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
 back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
 `[` and `]` halve and double the detail, how finely every mesh is made;
-F fills the screen, or leaves it; Escape ends the demo, natively.
+`,` and `.` swing the sun round, `-` and `=` lower and raise it; F fills
+the screen, or leaves it; Escape ends the demo, natively.
 -/
 
 open WebGPU.Window
@@ -167,6 +168,20 @@ ripples' and the pits' on top, as the bake sums them. -/
 def Ripples.height (r : Ripples) : Float :=
   r.steepness * r.wavelength * r.amplitude * (1 + r.fine + r.pitDepth)
 
+/-- The sun, as `shaders/sand.wgsl` lights by it: where it is in the sky.
+Under water the sun is never lower than about 40 degrees from the
+vertical, refraction bending it up; as high as that by default. -/
+structure Sun where
+  /-- Round from the x axis, in radians. -/
+  azimuth   : Float := 0.36
+  /-- Up from the horizon, in radians. -/
+  elevation : Float := 0.87
+  deriving Repr, Inhabited
+
+/-- The direction the sun's light comes from: unit, up. -/
+def Sun.direction (s : Sun) : Vec3 :=
+  ⟨s.elevation.cos * s.azimuth.cos, s.elevation.sin, s.elevation.cos * s.azimuth.sin⟩
+
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where
   /-- Every mesh's edges, as lines over it. -/
@@ -191,6 +206,7 @@ structure App where
   floor    : Floor         := {}
   ripples  : Ripples       := {}
   grains   : Grains        := {}
+  sun      : Sun           := {}
   detail   : Float         := 1
   overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button
@@ -230,6 +246,11 @@ def dollyPerPixel : Float := 0.01
 /-- Metres a second the keys move; with Shift, times this again. -/
 def moveSpeed : Float := 4
 def moveFast : Float := 4
+
+/-- Radians the sun swings round, and rises or sets, a key press: 10 and
+5 degrees. -/
+def sunSwing : Float := 0.1745
+def sunLift : Float := 0.0873
 
 /-- The code of the key `c` names. -/
 def keyOf (c : Char) : UInt32 := c.toNat.toUInt32
@@ -298,6 +319,14 @@ def update (event : Event) (a : App) : App × List Command :=
       ({ a with detail := max 0.25 (a.detail / 2) }, [.remesh])
     else if code == keyOf ']' then
       ({ a with detail := min 4 (a.detail * 2) }, [.remesh])
+    else if code == keyOf ',' then
+      ({ a with sun.azimuth := a.sun.azimuth - sunSwing }, [])
+    else if code == keyOf '.' then
+      ({ a with sun.azimuth := a.sun.azimuth + sunSwing }, [])
+    else if code == keyOf '-' then
+      ({ a with sun.elevation := max 0.09 (a.sun.elevation - sunLift) }, [])
+    else if code == keyOf '=' then
+      ({ a with sun.elevation := min 1.57 (a.sun.elevation + sunLift) }, [])
     else (a, [])
 
 /-- The state `dt` seconds on: the camera moved by the keys held. -/

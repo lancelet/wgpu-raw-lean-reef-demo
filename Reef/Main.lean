@@ -77,7 +77,12 @@ def Options.initial (o : Options) (width height : UInt32) : App :=
   let overlays : Overlays := {}
   let floor : Floor := {}
   let ripples : Ripples := {}
+  let sun : Sun := {}
   { width, height, camera := o.camera'
+    sun      := match o.sun with
+      | some (azimuth, elevation) =>
+        { azimuth := azimuth * 0.0174533, elevation := elevation * 0.0174533 }
+      | none => sun
     overlays := { wireframe := o.wireframe.getD overlays.wireframe
                   grid      := o.grid.getD overlays.grid }
     floor    := { floor with amplitude := o.relief.getD floor.amplitude }
@@ -100,6 +105,7 @@ def describe (a : App) : String :=
   let degrees (r : Float) : String := signed (r * 57.2958) 0
   s!"camera {signed c.position.x 1}, {signed c.position.y 1}, \
     {signed c.position.z 1}  yaw {degrees c.yaw} pitch {degrees c.pitch}  \
+    sun {degrees a.sun.azimuth},{degrees a.sun.elevation}  \
     detail {signed a.detail 2}"
 
 /-- A PPM image (binary, `P6`) of `width` by `height` pixels, from their
@@ -201,6 +207,10 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       app.ripples app.grains
     if let some path := options.tile then
       dumpTile wgpu device renderer.ripples app.ripples.texels path
+      let stem := (path.splitOn ".").dropLast
+      let horizonsPath := if stem.isEmpty then path ++ "-horizons"
+        else String.intercalate "." stem ++ "-horizons." ++ (path.splitOn ".").getLast!
+      dumpTile wgpu device renderer.horizons app.ripples.texels horizonsPath
     if let some path := options.grainTile then
       dumpTile wgpu device renderer.grains app.grains.texels path
     if let some path := options.screenshot then
@@ -278,8 +288,8 @@ end Reef
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
-[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]
-[--grain-tile FILE]`. -/
+[--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR]
+[--waves DEGREES] [--tile FILE] [--grain-tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

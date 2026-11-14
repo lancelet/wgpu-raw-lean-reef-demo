@@ -10,8 +10,12 @@
 // than the grain's: the surface is the highest of them at each point,
 // a packed bed. Among them, fragments (shell and the like): flatter
 // domes, bigger, one to some of the cells of a coarser grid, lying on
-// the bed. The grids are whole numbers of cells across the tile, so the
-// tile repeats.
+// the bed. The bed itself rises and falls a little over a few
+// millimetres, the sand's own unevenness between the grains and the
+// ripples, which shows as roughness from a metre or two off, where the
+// grains themselves have averaged away; and is a little darker in its
+// hollows. The grids and the noise are whole numbers of cells across
+// the tile, so the tile repeats.
 
 struct Bake {
   // The tile's texels a side; a grain's diameter, and a fragment's, in
@@ -53,6 +57,38 @@ fn cellSeed(cell : vec2i, n : i32, salt : u32) -> u32 {
   return (u32(wrapped.x) * 0x8da6b343u) ^ (u32(wrapped.y) * 0xd8163841u) ^ salt;
 }
 
+// A gradient at the lattice point `p` of a lattice `period` wide, which
+// repeats: a direction, not unit.
+fn gradient(p : vec2i, period : i32) -> vec2f {
+  var h = cellSeed(p, period, 0x7u);
+  h = h ^ (h >> 15u);
+  h = h * 0x2c1b3c6du;
+  h = h ^ (h >> 12u);
+  let a = f32(h & 0xffffu) / 65535.0;
+  let b = f32((h >> 16u) & 0xffffu) / 65535.0;
+  return vec2f(a, b) * 2.0 - 1.0;
+}
+
+// Gradient noise at `p`, repeating every `period`: smooth, about -1 to 1,
+// a feature a unit wide.
+fn noise(p : vec2f, period : i32) -> f32 {
+  let i = vec2i(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = dot(gradient(i, period), f);
+  let b = dot(gradient(i + vec2i(1, 0), period), f - vec2f(1.0, 0.0));
+  let c = dot(gradient(i + vec2i(0, 1), period), f - vec2f(0.0, 1.0));
+  let d = dot(gradient(i + vec2i(1, 1), period), f - vec2f(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 1.4;
+}
+
+// The bed's unevenness at `p`, in texels: two octaves of noise, eight
+// and four features across the tile, about -1 to 1.
+fn unevenness(p : vec2f) -> f32 {
+  let uv = p / bake.grain.x;
+  return 0.6 * noise(uv * 8.0 + 3.0, 8) + 0.4 * noise(uv * 4.0 + 11.0, 4);
+}
+
 // A grain's brightness, from its seed: most a little darker or lighter
 // than the sand, a few dark (basalt, say), a few bright (shell); a
 // fragment's more often one or the other.
@@ -62,7 +98,7 @@ fn brightnessOf(seed : u32, fragment : bool) -> f32 {
   let bright = select(0.1, 0.6, fragment);
   if (kind < dark) { return 0.15 + 0.15 * rand(seed, 4u); }
   if (kind < bright) { return 0.8 + 0.2 * rand(seed, 4u); }
-  return 0.45 + 0.25 * rand(seed, 4u);
+  return 0.4 + 0.3 * rand(seed, 4u);
 }
 
 // The surface of a bed of domes at `p`, in texels: the domes one to each
@@ -76,7 +112,7 @@ fn brightnessOf(seed : u32, fragment : bool) -> f32 {
 fn bedAt(p : vec2f, cell : f32, n : i32, radius : f32, vary : f32,
          squash : f32, stretch : f32, chance : f32, salt : u32) -> vec2f {
   let base = vec2i(floor(p / cell));
-  var best = vec2f(0.0, 0.3);
+  var best = vec2f(0.0, 0.2);
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let c = base + vec2i(i, j);
@@ -102,7 +138,8 @@ fn bedAt(p : vec2f, cell : f32, n : i32, radius : f32, vary : f32,
 }
 
 // The grains' surface at `p`, in texels: the bed of grains, and the
-// fragments lying on it, in height (texels) and brightness.
+// fragments lying on it, in height (texels) and brightness; the bed on
+// its unevenness, a grain's diameter of it, darker in the hollows.
 fn surfaceAt(p : vec2f) -> vec2f {
   let texels = bake.grain.x;
   let grainCells = i32(round(texels / bake.grain.y));
@@ -114,7 +151,10 @@ fn surfaceAt(p : vec2f) -> vec2f {
                         bake.grain.w, 0x2u);
   // A fragment lies on the bed, a grain's height up.
   if (fragments.x > 0.0) { fragments.x += grainCell * 0.5; }
-  return select(grains, fragments, fragments.x > grains.x);
+  let uneven = unevenness(p);
+  let surface = select(grains, fragments, fragments.x > grains.x);
+  return vec2f(surface.x + uneven * bake.grain.y,
+               surface.y * (1.0 + 0.2 * uneven));
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {

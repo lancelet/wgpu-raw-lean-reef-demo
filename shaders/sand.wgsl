@@ -99,6 +99,63 @@ fn morph(dist : f32, level : f32) -> f32 {
   return out;
 }
 
+// The grains' tile is small, and would show its repeating a few tile
+// widths off; so it is read through a grid of triangles a few tiles
+// across, each corner of which reads the tile from a place of its own,
+// and the three readings blended by how near the corners are (Heitz and
+// Neyret, "High-Performance By-Example Noise using a Histogram-
+// Preserving Blending Operator", 2018): no two triangles show the same
+// part of the tile, and no seam between them. A blend of three is
+// flatter than any one, so what varies is scaled back up by the
+// weights' length: the tilt, which varies about zero, and the
+// brightness, which varies about a half.
+const grainTriangles = 3.0;  // tile widths across one
+
+// Where `uv`, in tile widths, falls in the grid of triangles: the
+// three corners, and how near each (the barycentric weights).
+fn triangleAt(uv : vec2f) -> mat3x3f {
+  let skewed = mat2x2f(1.0, 0.0, -0.57735027, 1.15470054) * (uv / grainTriangles);
+  let base = floor(skewed);
+  let f = fract(skewed);
+  if (f.x + f.y < 1.0) {
+    return mat3x3f(vec3f(base, 1.0 - f.x - f.y),
+                   vec3f(base + vec2f(1.0, 0.0), f.x),
+                   vec3f(base + vec2f(0.0, 1.0), f.y));
+  }
+  return mat3x3f(vec3f(base + vec2f(1.0, 1.0), f.x + f.y - 1.0),
+                 vec3f(base + vec2f(1.0, 0.0), 1.0 - f.y),
+                 vec3f(base + vec2f(0.0, 1.0), 1.0 - f.x));
+}
+
+// The place a corner `corner` of the grid reads the tile from: an
+// offset of its own, in tile widths.
+fn cornerOffset(corner : vec2f) -> vec2f {
+  let c = vec2i(corner);
+  var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ 0x3u;
+  h = h ^ (h >> 15u);
+  h = h * 0x2c1b3c6du;
+  h = h ^ (h >> 12u);
+  return vec2f(f32(h & 0xffffu), f32((h >> 16u) & 0xffffu)) / 65535.0;
+}
+
+// The grains' tile at `xz`, in the world, read through the grid of
+// triangles, for a pixel whose footprint is `along` and `across`: the
+// normal (as the tile holds it) and the brightness.
+fn grainsAt(xz : vec2f, along : vec2f, across : vec2f) -> vec4f {
+  let uv = xz / frame.grain.x;
+  let corners = triangleAt(uv);
+  var sum = vec4f(0.0);
+  var weights = 0.0;
+  for (var i = 0; i < 3; i++) {
+    let corner = corners[i];
+    let read = textureSampleGrad(grains, rippleSampler, uv + cornerOffset(corner.xy),
+                                 along / frame.grain.x, across / frame.grain.x);
+    sum += corner.z * (read - 0.5);
+    weights += corner.z * corner.z;
+  }
+  return sum / sqrt(weights) + 0.5;
+}
+
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
   let dist = length(in.relative);
@@ -130,9 +187,7 @@ fn morph(dist : f32, level : f32) -> f32 {
   // likewise: where they are finer than the pixel, the normal averages
   // to flat, and shorter (the roughness they leave, Toksvig's measure,
   // for the lighting to come), so the tilt fades out of its own accord.
-  let grainUV = world.xz / frame.grain.x;
-  let grain = textureSampleGrad(grains, rippleSampler, grainUV,
-                                footAlong / frame.grain.x, footAcross / frame.grain.x);
+  let grain = grainsAt(world.xz, footAlong, footAcross);
   let tilt = grain.rgb * 2.0 - 1.0;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));

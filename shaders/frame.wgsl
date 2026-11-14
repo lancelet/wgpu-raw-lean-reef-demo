@@ -25,7 +25,7 @@ struct Frame {
   deep     : vec4f,  // ... seen down, into the depths
   sunlight : vec4f,  // the sun's light at the floor
   skylight : vec4f,  // the sky's, from all above
-  caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; w unused
+  caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; the wind over the sea, 0 calm to 1 fresh, for the capillaries
   surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
   shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
   swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused

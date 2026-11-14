@@ -64,8 +64,8 @@ fn sky(dir : vec3f) -> vec3f {
   let sunAir = sunInAir();
   let toSun = max(dot(dir, -sunAir), 0.0);
   let disc = pow(toSun, 4000.0) * 400.0;
-  let flash = pow(toSun, 250.0) * 12.0;
-  let halo = pow(toSun, 12.0) * 0.6;
+  let flash = pow(toSun, 900.0) * 6.0;
+  let halo = pow(toSun, 12.0) * 0.5;
   return base + vec3f(1.0, 0.96, 0.88) * (disc + flash + halo);
 }
 
@@ -73,9 +73,16 @@ fn sky(dir : vec3f) -> vec3f {
 // raises on the water, too fine for the sea's grid, that turn the sun's
 // image into a field of flashes; as a tilt of the surface, two octaves
 // of noise drifting with the wind, fading out with distance, where a
-// pixel spans many and they would only shimmer.
+// pixel spans many and they would only shimmer. In patches: the wind
+// gusts, raising cat's-paws here and leaving slicks there, glassy, a
+// few metres across and changing over seconds, so the sun is a hard
+// disc through a slick and a sparkle field through a cat's-paw; the
+// wind's strength sets how much of the surface is ruffled at all.
 fn capillaries(xz : vec2f, t : f32, dist : f32) -> vec2f {
   let dir = frame.ripple.xy;
+  let gusts = noise((xz - dir * t * 0.8) / 3.0 + vec2f(0.0, t * 0.05));
+  let wind = frame.caustic.w;
+  let ruffled = smoothstep(0.35 - 0.1 * wind, 0.0 - 0.1 * wind, -gusts);
   let drift = dir * t * 0.3;
   let p1 = (xz - drift) / 0.05;
   let p2 = (xz - drift * 1.6) / 0.018 + 13.0;
@@ -85,7 +92,7 @@ fn capillaries(xz : vec2f, t : f32, dist : f32) -> vec2f {
   let b = vec2f(noise(p2 + vec2f(e, 0.0)) - noise(p2 - vec2f(e, 0.0)),
                 noise(p2 + vec2f(0.0, e)) - noise(p2 - vec2f(0.0, e))) / (2.0 * e);
   let fade = 1.0 - smoothstep(8.0, 40.0, dist);
-  return (a * 0.045 + b * 0.025) * fade;
+  return (a * 0.04 + b * 0.03) * fade * ruffled;
 }
 
 // The sun's light as it comes through the air: the water's direction is

@@ -42,7 +42,7 @@ struct Bake {
 @group(0) @binding(1) var heights : texture_2d<f32>;
 
 const tau = 6.283185307;
-const kernelsPerCell = 4u;
+const kernelsPerCell = 8u;
 // The direction's and the frequency's fields: this many features across
 // the tile.
 const bends = 4.0;
@@ -167,7 +167,7 @@ fn phasor(p : vec2f, scale : f32) -> vec3f {
 
 // How far the crests are rounded: a little, so that the normal has no
 // one-texel cusp to show as a line along every crest.
-const rounding = 0.03;
+const rounding = 0.02;
 
 // The height for a phase, were the ripples symmetric: 1 at a crest
 // (phase 0), 0 in a trough; the crests sharp (though rounded a little)
@@ -193,12 +193,14 @@ fn profile(phi : f32) -> f32 {
 }
 
 // The ripples' height from the kernels' sum `s`: the profile of the
-// phase, tapering to the mean where the kernels disagree (the sum short
-// against the weights), as a crest tapers out where it ends or forks;
-// the phase alone would jump there, a cliff.
+// phase, tapering where the kernels disagree (the sum short against the
+// weights), as a crest tapers out where it ends or forks; the phase
+// alone would jump there, a cliff. Not to nothing: a quarter of the
+// height stays, faint ripples rather than a flat, and where the phase
+// does jump, a step a quarter the size.
 fn rippleOf(s : vec3f) -> f32 {
   let agreement = length(s.xy) / s.z;
-  let taper = smoothstep(0.05, 0.25, agreement);
+  let taper = mix(0.25, 1.0, smoothstep(0.02, 0.15, agreement));
   return mix(0.5, profile(atan2(s.y, s.x)), taper);
 }
 

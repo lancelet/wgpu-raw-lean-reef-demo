@@ -110,7 +110,7 @@ structure Ripples where
   wholly: a little breaks the crests up. -/
   disorder   : Float := 0
   /-- The crests' sharpness: a power, under 1 sharp. -/
-  sharpness  : Float := 0.6
+  sharpness  : Float := 0.5
   /-- How much of the wavelength the gentle rise to a crest takes, the
   steep fall down its lee the rest: 0.5 symmetric. -/
   asymmetry  : Float := 0.65

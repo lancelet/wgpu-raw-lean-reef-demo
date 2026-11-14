@@ -47,23 +47,44 @@ fn rand(seed : u32, n : u32) -> f32 {
   return f32(h & 0xffffffu) / 16777216.0;
 }
 
-// A bubble born: about the camera, under the surface, where the sea is
-// steep; its size a few millimetres, mostly small.
+// A bubble born: about the camera, under the surface, in a plume where
+// the sea is steep, as a breaking crest leaves one: the plumes a few
+// metres apart, each a cloud a metre or so across and a metre deep,
+// born over a second or two; between them, a few strays. Its size a few
+// millimetres, mostly small, the plume's bigger.
 fn born(i : u32, salt : u32) -> Bubble {
   let seed = i * 0x27d4eb2fu + salt * 0x165667b1u;
   var b : Bubble;
   let reach = pool.reach;
-  let xz = frame.camera.xz + (vec2f(rand(seed, 0u), rand(seed, 1u)) - 0.5) * 2.0 * reach;
-  // Under the surface, by the sea's steepness there: where it is steep,
-  // deeper and more; where flat, few, shallow.
-  let sea = seaAt(xz);
-  let steep = clamp(length(sea.yz) * 4.0, 0.1, 1.0);
-  let depth = (0.1 + 1.5 * steep) * rand(seed, 2u);
+  // The plume: one of the cells of a grid four metres across about the
+  // camera, that moment's; where in its cell by the sea's steepness,
+  // steepest of a few tries.
+  let cells = 4.0;
+  let cell = vec2i(vec2f(rand(seed, 6u), rand(seed, 7u)) * (2.0 * reach / cells))
+    + vec2i(frame.camera.xz / cells - reach / cells);
+  let cellSeed = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u)
+    ^ (u32(pool.time / 3.0) * 0x5bd1e995u);
+  var best = vec2f(0.0);
+  var bestSteep = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let at = (vec2f(cell) + vec2f(rand(cellSeed, k * 2u), rand(cellSeed, k * 2u + 1u))) * cells;
+    let s = seaAt(at);
+    let steep = length(s.yz);
+    if (steep > bestSteep) { bestSteep = steep; best = at; }
+  }
+  let inPlume = rand(seed, 8u) < 0.8;
+  let spread = select(reach, 0.6, inPlume);
+  let about = select(frame.camera.xz, best, inPlume);
+  let r = sqrt(rand(seed, 0u)) * spread;
+  let a = rand(seed, 1u) * 6.2832;
+  let xz = about + vec2f(cos(a), sin(a)) * r;
+  let steep = clamp(bestSteep * 5.0, 0.2, 1.0);
+  let depth = select(0.3 * rand(seed, 2u), (0.2 + 1.2 * steep) * rand(seed, 2u), inPlume);
   b.position = vec3f(xz.x, frame.water.x - depth, xz.y);
   let size = rand(seed, 3u);
-  b.radius = 0.0004 + 0.004 * size * size;
+  b.radius = select(0.0005 + 0.002 * size, 0.001 + 0.006 * size * size, inPlume);
   b.age = 0.0;
-  b.life = 4.0 + 8.0 * rand(seed, 4u);
+  b.life = select(3.0 + 3.0 * rand(seed, 4u), 2.0 + 5.0 * rand(seed, 4u), inPlume);
   b.phase = rand(seed, 5u) * 6.2832;
   b.pad = steep;
   return b;
@@ -105,6 +126,7 @@ struct Out {
   @location(0) uv       : vec2f,
   @location(1) relative : vec3f,
   @location(2) fade     : f32,
+  @location(3) pixels   : f32,  // the bubble's width on the screen
 }
 
 // Each bubble a quad of two triangles, facing the camera, its size the
@@ -118,9 +140,10 @@ struct Out {
   let size = b.radius * 1.4;
   // Never under a pixel and a fifth: a smaller bubble is drawn that big
   // and fainter by as much, a point of light rather than nothing.
-  let least = dist * frame.camera.w * 1.2;
-  let drawn = max(size, least);
-  let coverage = (size * size) / (drawn * drawn);
+  // And softly: the quad three times the bubble, the glow's.
+  let least = dist * frame.camera.w * 2.0;
+  let drawn = max(size * 3.0, least);
+  let coverage = min(1.0, (size * 3.0) * (size * 3.0) / (drawn * drawn));
   let right = frame.right.xyz;
   let up = frame.up.xyz;
   let world = relative + (right * corner.x + up * corner.y) * drawn;
@@ -131,29 +154,73 @@ struct Out {
   // Fading in as born, and out at the end of its life.
   out.fade = smoothstep(0.0, 0.5, b.age) * (1.0 - smoothstep(b.life - 1.0, b.life, b.age))
     * max(coverage, 0.15);
+  out.pixels = 2.0 * size / max(dist * frame.camera.w, 1e-6);
   return out;
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let r = length(in.uv);
   if (r > 1.0) { discard; }
-  // A bright rim, a glassy middle that shows the water behind, and a
-  // highlight toward the sun.
-  let rim = smoothstep(0.55, 0.85, r) * (1.0 - smoothstep(0.85, 1.0, r));
-  let middle = 1.0 - smoothstep(0.0, 0.6, r);
   let dist = length(in.relative);
   let view = in.relative / max(dist, 1e-4);
-  let sunward = max(dot(normalize(vec3f(in.uv.x, in.uv.y, 0.4)),
-                        normalize(vec3f(dot(frame.sun.xyz, frame.right.xyz),
-                                        dot(frame.sun.xyz, frame.up.xyz), 0.6))), 0.0);
-  let highlight = pow(sunward, 16.0) * 1.5;
   // The light about the bubble: the water's at this depth, the sun's
   // above.
   let depthHere = frame.water.x - (in.relative.y + frame.camera.y);
   let sunlight = frame.sunlight.rgb * exp(-frame.extinct.rgb * depthHere / max(frame.sun.y, 0.1));
   let ambient = water(vec3f(0.0, 1.0, 0.0)) * 2.0;
-  let colour = (ambient + sunlight * 0.3) * (rim * 0.9 + middle * 0.08)
-    + sunlight * highlight * rim;
-  let alpha = min((rim * 0.8 + middle * 0.12 + highlight * rim) * in.fade, 1.0);
+  // The bubble is the inner third of the quad; about it, a soft glow
+  // (the water it lights), for when it is a point of light far off; up
+  // close the glow goes and the bubble is a sphere of air in water, as
+  // the eye has it.
+  let core = r * 3.0;
+  let near = smoothstep(4.0, 14.0, in.pixels);
+  let glow = (1.0 - smoothstep(0.2, 1.0, r)) * 0.35 * (1.0 - near);
+  // Far: a bright rim about a glassy middle, and a highlight toward the
+  // sun.
+  let rimFar = smoothstep(0.55, 0.85, core) * (1.0 - smoothstep(0.85, 1.1, core));
+  let middleFar = 1.0 - smoothstep(0.0, 0.6, core);
+  let sunward = max(dot(normalize(vec3f(in.uv.x, in.uv.y, 0.4)),
+                        normalize(vec3f(dot(frame.sun.xyz, frame.right.xyz),
+                                        dot(frame.sun.xyz, frame.up.xyz), 0.6))), 0.0);
+  let highlightFar = pow(sunward, 16.0) * 1.5;
+  let colourFar = (ambient + sunlight * 0.3) * (rimFar * 0.9 + middleFar * 0.08 + glow)
+    + sunlight * highlightFar * rimFar;
+  let alphaFar = rimFar * 0.8 + middleFar * 0.12 + highlightFar * rimFar + glow;
+  // Near: the sphere's own optics. Its normal where the pixel sees it;
+  // the view's angle to it. Light from the water in front of the bubble
+  // reflects from its surface by Fresnel's share, wholly past 48.6
+  // degrees (air is the rarer medium: total internal reflection), so
+  // the outer quarter of the disc is a mirror of the water around,
+  // bright; inside, the bubble is a lens, diverging, that shows the
+  // water behind it shrunk and inverted, dim. The sun's image reflected
+  // on the front, a hard spot, and a second, fainter, reflected within
+  // from the back.
+  let inside = min(core, 1.0);
+  let nz = sqrt(max(1.0 - inside * inside, 0.0));
+  let n = vec3f(in.uv.x * 3.0, in.uv.y * 3.0, nz);
+  let normal = normalize(frame.right.xyz * n.x + frame.up.xyz * n.y - view * n.z);
+  let cosI = max(dot(normal, -view), 0.0);
+  let sinT = 1.333 * sqrt(max(1.0 - cosI * cosI, 0.0));
+  var reflectance = 1.0;
+  if (sinT < 1.0) {
+    let cosT = sqrt(1.0 - sinT * sinT);
+    let rs = (1.333 * cosI - cosT) / (1.333 * cosI + cosT);
+    let rp = (cosT - 1.333 * cosI) / (cosT + 1.333 * cosI);
+    reflectance = 0.5 * (rs * rs + rp * rp);
+  }
+  let mirrored = reflect(view, normal);
+  let reflected = water(mirrored) * 1.6 + ambient * 0.2;
+  // Through the lens: what is behind, spread wide: the water's colour in
+  // the view's direction, and some of the way down.
+  let transmitted = water(normalize(view + vec3f(0.0, -0.3, 0.0))) * 0.8;
+  let spot = pow(max(dot(mirrored, frame.sun.xyz), 0.0), 600.0) * 6.0;
+  let spot2 = pow(max(dot(reflect(view, -normal), frame.sun.xyz), 0.0), 300.0) * 1.2;
+  let edge = 1.0 - smoothstep(0.96, 1.0, core);
+  let colourNear = (reflected * reflectance + transmitted * (1.0 - reflectance) * 0.4
+    + sunlight * (spot + spot2)) * edge;
+  let alphaNear = (reflectance + (1.0 - reflectance) * 0.4 + spot * 0.3) * edge
+    * select(0.0, 1.0, core <= 1.0);
+  let colour = mix(colourFar, colourNear, near);
+  let alpha = min(mix(alphaFar, alphaNear, near) * in.fade, 1.0);
   return vec4f(fogged(colour, in.relative) * alpha, alpha);
 }

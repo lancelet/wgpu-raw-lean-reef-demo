@@ -46,7 +46,7 @@ bytes, for the moment `time` and the field `component`. -/
 def seaBytes (w : Water) (time : Float) (component : Nat) : ByteArray :=
   let bytes := [w.tile, time, w.loop].foldl pushF32 ByteArray.empty
   let bytes := pushU32 bytes component.toUInt32
-  [w.wind, w.windDirection.cos, w.windDirection.sin, w.amplitude, w.shortest,
+  [w.wind, w.windDirection.cos, w.windDirection.sin, w.chopAmplitude, w.shortest,
    0, 0, 0].foldl pushF32 bytes
 
 /-- The bake's uniforms, as `shaders/caustics.wgsl` lays out `Bake`: 32

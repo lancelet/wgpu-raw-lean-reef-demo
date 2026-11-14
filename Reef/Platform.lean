@@ -29,6 +29,9 @@ structure Options where
   /-- Whether the wireframe, and the grid, show at the start, if said. -/
   wireframe  : Option Bool := none
   grid       : Option Bool := none
+  /-- Where the sun is, if said: round from the x axis, and up from the
+  horizon, in degrees. -/
+  sun        : Option (Float × Float) := none
   /-- The floor's relief, as a factor of its design, if said. -/
   relief     : Option Float := none
   /-- The ripples' height, as a factor of their design, if said. -/
@@ -44,8 +47,8 @@ structure Options where
 def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
     [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
-    [--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE] \
-    [--grain-tile FILE]"
+    [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR] \
+    [--waves DEGREES] [--tile FILE] [--grain-tile FILE]"
 
 /-- `s` as a switch, if it is one. -/
 def parseSwitch (s : String) : Option Bool :=
@@ -78,6 +81,10 @@ def Options.parse : List String → Except String Options
     let some [x, y, z, yaw, pitch] := (spec.splitOn ",").mapM parseFloat
       | throw s!"not a camera: {spec} (X,Y,Z,YAW,PITCH)"
     return { ← Options.parse rest with camera := some (x, y, z, yaw, pitch) }
+  | "--sun" :: spec :: rest => do
+    let some [azimuth, elevation] := (spec.splitOn ",").mapM parseFloat
+      | throw s!"not a sun: {spec} (AZIMUTH,ELEVATION, in degrees)"
+    return { ← Options.parse rest with sun := some (azimuth, elevation) }
   | "--wireframe" :: on :: rest => do
     let some on := parseSwitch on | throw s!"not on or off: {on}"
     return { ← Options.parse rest with wireframe := some on }

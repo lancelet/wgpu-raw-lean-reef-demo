@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 176 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 192 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -13,6 +13,7 @@ struct Frame {
   ripple   : vec4f,  // the waves' direction (x, z), the ripples' wavelength, their height, in metres
   tiling   : vec4f,  // the ripples' tile, in metres; the distance their displacement fades from, and to; the cavity's strength
   grain    : vec4f,  // the grains' tile, in metres; their relief; their speckle; w unused
+  sun      : vec4f,  // where the sun's light comes from: unit; w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -23,6 +24,7 @@ struct Frame {
 @group(0) @binding(2) var ripples : texture_2d<f32>;
 @group(0) @binding(3) var rippleSampler : sampler;
 @group(0) @binding(4) var grains : texture_2d<f32>;
+@group(0) @binding(5) var horizons : texture_2d<f32>;
 
 // The background, which what is far fades into: the colour the frame is
 // cleared to.

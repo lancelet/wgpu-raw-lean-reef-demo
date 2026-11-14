@@ -59,8 +59,9 @@ structure Renderer where
   grid     : RenderPipeline
   /-- The frame's uniforms, written each frame. -/
   frame    : Buffer
-  /-- The ripples' tile, and the grains', baked once. -/
+  /-- The ripples' tile, and their horizons', and the grains', baked once. -/
   ripples  : Tile
+  horizons : Tile
   grains   : Tile
   /-- The bind group of the frame's uniforms, the floor's nodes and the
   tiles, for every pipeline here. -/
@@ -87,12 +88,14 @@ as one matrix, where the camera is (and the angle a pixel subtends), the grid, t
 the leaves' range, the morph fraction, the height's amplitude), the eye's
 place in its leaf cell, with the cell's size, the ripples (the waves'
 direction, the wavelength, the height; the tile's width, where the
-displacement fades from and to, the cavity's strength), and the grains
-(the tile's width, the relief, the speckle): 176 bytes.
+displacement fades from and to, the cavity's strength), the grains (the
+tile's width, the relief, the speckle), and the sun's direction: 192
+bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
-    (floor : Floor) (cells : Nat) (ripples : Ripples) (grains : Grains) :
-    ByteArray :=
+    (floor : Floor) (cells : Nat) (ripples : Ripples) (grains : Grains)
+    (sun : Sun) : ByteArray :=
+  let light := sun.direction
   let cell := floor.leaf / cells.toFloat
   let within (x : Float) := x - (x / cell).floor * cell
   (viewProj.m.toList ++ [camera.x, camera.y, camera.z, pixel]
@@ -102,7 +105,8 @@ def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
     ++ [ripples.direction.cos, ripples.direction.sin, ripples.wavelength,
         ripples.height]
     ++ [ripples.tile, ripples.fadeFrom, ripples.fadeTo, ripples.cavity]
-    ++ [grains.tile, grains.relief, grains.speckle, 0]).foldl
+    ++ [grains.tile, grains.relief, grains.speckle, 0]
+    ++ [light.x, light.y, light.z, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -172,6 +176,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 3, visibility := .vertex ||| .fragment,
         sampler := { type := .filtering } },
       { binding := 4, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 5, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }
@@ -190,9 +196,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
-    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples grains)
+    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples grains {})
   let mesh ← FloorMesh.create device floor.cells
-  let tile ← ripples.bake device
+  let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
   let data ← device.createBindGroup {
     label   := "frame"
@@ -202,11 +208,12 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 1, buffer := some mesh.nodes },
       { binding := 2, textureView := some tile.view },
       { binding := 3, sampler := some tile.sampler },
-      { binding := 4, textureView := some grainTile.view }
+      { binding := 4, textureView := some grainTile.view },
+      { binding := 5, textureView := some horizons.view }
     ]
   }
   return {
-    device, format, sand, sandWire, grid, frame, data
+    device, format, sand, sandWire, grid, frame, data, horizons
     ripples := tile
     grains  := grainTile
     queue   := ← device.getQueue
@@ -268,7 +275,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
     (frameBytes viewProj eye (fovY / (max app.height 1).toFloat) app.grid
-      app.floor floor.cells app.ripples app.grains)
+      app.floor floor.cells app.ripples app.grains app.sun)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0

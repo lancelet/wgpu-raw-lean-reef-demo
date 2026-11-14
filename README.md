@@ -38,7 +38,8 @@ It fills the screen; F leaves it, or fills it again, and Escape ends it.
 `reef --screenshot FILE` draws one frame into that file, a PPM image, and
 ends (with `--headless`, with no display at all); `reef --camera
 X,Y,Z,YAW,PITCH` starts the camera there (metres, and degrees), as a
-screenshot from a chosen view needs; `--wireframe on|off` and `--grid
+screenshot from a chosen view needs; `--sun AZIMUTH,ELEVATION` puts the
+sun there (degrees round from the x axis, and up); `--wireframe on|off` and `--grid
 on|off` say whether those show at the start; `--relief FACTOR` and
 `--ripples FACTOR` scale the floor's elevation and its ripples' height,
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
@@ -54,7 +55,8 @@ Shift, pan; with Ctrl (or a pinch, in a browser), dolly in and out; with
 Alt, turn in place. The main mouse button, dragged, does the same four.
 W, A, S, D (or the arrows) move the camera, Q and E down and up, and Shift
 hurries. Home puts the camera back where it started. 1 shows the
-wireframe, or hides it, and 2 the grid; `[` and `]` halve and double the
+wireframe, or hides it, and 2 the grid; `,` and `.` swing the sun round
+and `-` and `=` lower and raise it; `[` and `]` halve and double the
 detail, how finely every mesh is made, for the hardware at hand.
 
 [elan]: https://github.com/leanprover/elan

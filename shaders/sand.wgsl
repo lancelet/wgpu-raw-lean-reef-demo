@@ -100,16 +100,18 @@ fn morph(dist : f32, level : f32) -> f32 {
 }
 
 // The grains' tile is small, and would show its repeating a few tile
-// widths off; so it is read through a grid of triangles a few tiles
-// across, each corner of which reads the tile from a place of its own,
-// and the three readings blended by how near the corners are (Heitz and
-// Neyret, "High-Performance By-Example Noise using a Histogram-
-// Preserving Blending Operator", 2018): no two triangles show the same
-// part of the tile, and no seam between them. A blend of three is
-// flatter than any one, so what varies is scaled back up by the
-// weights' length: the tilt, which varies about zero, and the
-// brightness, which varies about a half.
-const grainTriangles = 3.0;  // tile widths across one
+// widths off; so it is read through a grid of triangles, each corner of
+// which reads the tile from a place of its own, and the three readings
+// blended by how near the corners are (Heitz and Neyret, "High-
+// Performance By-Example Noise using a Histogram-Preserving Blending
+// Operator", 2018): no two triangles show the same part of the tile,
+// and no seam between them. The triangles are smaller than the tile, so
+// that it never repeats even within one (a grid of a few tiles across
+// let it, and the repeat showed at a metre). A blend of three is flatter
+// than any one, so what varies is scaled back up by the weights' length:
+// the tilt, which varies about zero, and the brightness, which varies
+// about a half.
+const grainTriangles = 0.4;  // tile widths across one
 
 // Where `uv`, in tile widths, falls in the grid of triangles: the
 // three corners, and how near each (the barycentric weights).

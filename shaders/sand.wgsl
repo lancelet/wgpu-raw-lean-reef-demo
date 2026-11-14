@@ -56,7 +56,11 @@ fn floorAt(cellXZ : vec2f) -> vec3f {
   let xz = cellXZ * frame.eye.z - frame.eye.xy;
   let world = xz + frame.camera.xz;
   let dist = length(xz);
-  let y = height(world) + rippleHeight(world, dist) * rippleFade(dist);
+  // (The ripples as freely as the sand moves: dying out in the rock's
+  // lee.)
+  let bed = seabedAt(world);
+  let y = baseHeight(world) + bed.z
+    + rippleHeight(world, dist) * rippleFade(dist) * min(bed.w, 1.2);
   return vec3f(xz.x, y - frame.camera.y, xz.y);
 }
 
@@ -228,7 +232,11 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // per metre, and turned to the world's axes.
   let tile = textureSampleGrad(ripples, rippleSampler, rippleUV(world.xz),
                                rippleUV(footAlong), rippleUV(footAcross));
-  let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z;
+  // As freely as the sand moves here (the seabed's map): the ripples
+  // die out where the rock shelters the sand.
+  let bed = seabedAt(world.xz);
+  let rippled = min(bed.w, 1.2);
+  let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z * rippled;
   let dir = frame.ripple.xy;
   slope += along.x * dir + along.y * vec2f(-dir.y, dir.x);
   // The grains' tilt, from their tile over the world's axes, filtered
@@ -253,7 +261,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   var grain = far;
   if (farness < 1.0) {
     let colonies = smoothstep(0.05, 0.4, noise(world.xz / 0.5 + 77.0));
-    let still = (1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies;
+    // (And where the rock shelters the sand from the surge: there all
+    // of it is still.)
+    let still = max((1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies,
+                    (1.0 - smoothstep(0.3, 0.8, bed.w)) * mix(0.5, 1.0, colonies));
     grain = mix(grainsAt(world.xz, footAlong, footAcross, sorted, still), far, farness);
   }
   let tilt = grain.xyz;
@@ -273,7 +284,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
                    vec4f(0.0));
   let rims = textureSampleGrad(horizons, rippleSampler, rippleUV(world.xz),
                                rippleUV(footAlong), rippleUV(footAcross));
-  let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963;
+  let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963 * rippled;
   let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
@@ -282,7 +293,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point
   // meets the surface, so that they drift down the sun's slant).
-  let cavity = mix(1.0, tile.a, frame.tiling.w);
+  let cavity = mix(1.0, tile.a, frame.tiling.w * min(rippled, 1.0));
   let toSurface = (frame.water.x - world.y) / max(sun.y, 0.1);
   // Where the sun's ray through this point meets the surface, and where
   // the swell has carried the chop there from: the caustics slide with
@@ -321,7 +332,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
   // And the bommies' shadows, and the sky they hide about their feet.
-  let reef = seabedAt(world.xz).xy;
+  let reef = bed.xy;
   let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded * reef.y;
   let light = frame.skylight.rgb * cavity * reef.x
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;

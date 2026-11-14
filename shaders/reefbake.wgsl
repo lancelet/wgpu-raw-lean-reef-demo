@@ -199,10 +199,10 @@ fn vertexPass(@builtin(global_invocation_id) id : vec3u) {
   // The sun's shadow: marched through the field toward it, softly.
   var t = 0.08;
   var lit = 1.0;
-  for (var s = 0; s < 28; s++) {
+  for (var s = 0; s < 48; s++) {
     let h = sdf(p + normal * 0.03 + bake.sun * t);
     lit = min(lit, 6.0 * h / t);
-    t += clamp(h, 0.04, 0.5);
+    t += clamp(h, 0.04 + 0.03 * t, 0.5);
     if (lit < 0.01 || t > 9.0) { break; }
   }
   let v = atomicAdd(&counts[0], 1u);

@@ -26,7 +26,7 @@ namespace Reef
 
 /-- The box the reef's field covers: its corner, a cell's width, and the
 grid's points along x, y and z (`shaders/frame.wgsl` reads them too). -/
-def reefOrigin : Vec3 := ⟨-19.2, -1.5, -32⟩
+def reefOrigin : Vec3 := ⟨-19.2, -3.0, -32⟩
 def reefCell : Float := 0.15
 def reefDims : Nat × Nat × Nat := (256, 48, 256)
 

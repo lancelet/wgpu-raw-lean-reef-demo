@@ -280,7 +280,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
         buffer := { type := .readOnlyStorage } },
       { binding := 2, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
-      { binding := 3, visibility := .vertex ||| .fragment,
+      { binding := 3, visibility := .vertex ||| .fragment ||| .compute,
         sampler := { type := .filtering } },
       { binding := 4, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
@@ -292,7 +292,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
         buffer := { type := .readOnlyStorage } },
       { binding := 8, visibility := .fragment ||| .compute,
         texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } },
-      { binding := 9, visibility := .vertex ||| .fragment,
+      { binding := 9, visibility := .vertex ||| .fragment ||| .compute,
         texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }

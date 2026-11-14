@@ -281,8 +281,10 @@ fn noise(p : vec2f) -> f32 {
 // a couple of metres across and under one, some centimetres high, the
 // waves drawn out along the ripples' crests (across the waves'
 // direction), as sand waves lie (`Reef.Floor.relief` bounds the whole).
-// The ripples are on top of this (`shaders/sand.wgsl`).
-fn height(xz : vec2f) -> f32 {
+// The ripples are on top of this (`shaders/sand.wgsl`); and what the
+// reef's framework has made of the sand about it, its moats and its
+// tails (`height`).
+fn baseHeight(xz : vec2f) -> f32 {
   let dir = frame.ripple.xy;
   let along = vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x)));
   return frame.floor.w * (0.6 * noise(xz / 40.0) + 0.45 * noise(xz / 13.0 + 7.0)
@@ -445,21 +447,32 @@ fn reefShade(p : vec3f) -> vec2f {
   let sun = frame.sun.xyz;
   var t = max(near, 0.05);
   var lit = 1.0;
-  for (var s = 0; s < 64; s++) {
+  // (A ray grazing up the rock's face finds it near all the way: its
+  // steps grow with the distance, so that it reaches what overhangs it
+  // within the steps it has, and does not end short, in the light.)
+  for (var s = 0; s < 96; s++) {
     let h = reefDistance(p + sun * t, true);
     lit = min(lit, 0.5 + 0.5 * h / (0.06 * t + 0.02));
-    t += clamp(h * 0.7, 0.02, 0.4);
+    t += clamp(h * 0.7, 0.02 + 0.03 * t, 0.4);
     if (lit < 0.0 || t > 7.0) { break; }
   }
   return vec2f(ao, smoothstep(0.0, 1.0, clamp(lit, 0.0, 1.0)));
 }
 
 // The seabed's map at `xz` (shaders/seabed.wgsl): the sky the framework
-// leaves the sand there, and the sun; all of both outside its box.
+// leaves the sand there, and the sun; how much it has lowered or raised
+// the sand, in metres; and how freely the sand moves there (1 as on the
+// open floor). Outside its box, the open floor's.
 fn seabedAt(xz : vec2f) -> vec4f {
   let extent = (frame.reefDims.xz - 1.0) * frame.reef.w;
   let uv = (xz - frame.reef.xz) / extent;
-  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return vec4f(1.0, 1.0, 0.0, 0.0); }
+  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return vec4f(1.0, 1.0, 0.0, 1.0); }
   return textureSampleLevel(seabed, rippleSampler, uv, 0.0);
+}
+
+// The floor's height at `xz`, in the world: the open floor's, and what
+// the reef's framework has made of it.
+fn height(xz : vec2f) -> f32 {
+  return baseHeight(xz) + seabedAt(xz).z;
 }
 

@@ -16,10 +16,11 @@ struct Mote {
   // Where, in the world; its radius, in metres (0 not yet placed).
   position : vec3f,
   radius   : f32,
-  // Its phase, for its wandering; unused.
+  // Its phase, for its wandering; the half-width of its shell's box, in
+  // metres; its tint, 0 to 1; unused.
   phase    : f32,
-  pad0     : f32,
-  pad1     : f32,
+  shell    : f32,
+  tint     : f32,
   pad2     : f32,
 }
 
@@ -51,17 +52,31 @@ fn rand(seed : u32, n : u32) -> f32 {
 }
 
 // STEP
-// A fleck placed: anywhere in the box, between the floor's zero and the
-// surface; most a fraction of a millimetre, a few bigger.
+// A fleck placed. In one of three shells about the camera, each its own
+// box that wraps round it: the near, a quarter of the reach, holds half
+// the flecks, small; the middle, half the reach, a third, middling; the
+// far, the whole reach, the rest, larger. So the flecks are thick where
+// the eye can see them small and thin where only the bigger show. Its
+// size spread wide (the log of it), a few flakes of a few millimetres;
+// its tint its own.
 fn placed(i : u32) -> Mote {
   let seed = i * 0x27d4eb2fu + 0x165667b1u;
   var m : Mote;
-  let reach = pool.reach;
-  let xz = frame.camera.xz + (vec2f(rand(seed, 0u), rand(seed, 1u)) - 0.5) * 2.0 * reach;
-  m.position = vec3f(xz.x, rand(seed, 2u) * frame.water.x, xz.y);
-  let size = rand(seed, 3u);
-  m.radius = 0.00015 + 0.0012 * size * size * size;
+  let which = rand(seed, 6u);
+  var shell = pool.reach;
+  var scale = 1.6;
+  if (which < 0.5) { shell = pool.reach * 0.25; scale = 0.6; }
+  else if (which < 0.83) { shell = pool.reach * 0.5; scale = 1.0; }
+  let xz = frame.camera.xz + (vec2f(rand(seed, 0u), rand(seed, 1u)) - 0.5) * 2.0 * shell;
+  let lowest = max(frame.camera.y - shell, 0.0);
+  let highest = min(frame.camera.y + shell, frame.water.x - 0.03);
+  m.position = vec3f(xz.x, mix(lowest, highest, rand(seed, 2u)), xz.y);
+  let spread = exp((rand(seed, 3u) + rand(seed, 7u) - 1.0) * 2.2);
+  let flake = select(1.0, 4.0, rand(seed, 8u) < 0.02);
+  m.radius = 0.0003 * scale * spread * flake;
   m.phase = rand(seed, 4u) * 6.2832;
+  m.shell = shell;
+  m.tint = rand(seed, 5u);
   return m;
 }
 
@@ -79,9 +94,9 @@ fn step(@builtin(global_invocation_id) id : vec3u) {
   let wander = vec3f(sin(t * 0.7 + m.phase), sin(t * 0.43 + m.phase * 2.1) * 0.5,
                      cos(t * 0.61 + m.phase * 1.3)) * 0.004;
   m.position += (vec3f(surge.x, -0.001, surge.y) + wander) * dt;
-  // Kept in the box about the camera, wrapping round it; and between the
-  // floor's zero and the surface, wrapping too.
-  let reach = pool.reach;
+  // Kept in its shell's box about the camera, wrapping round it; and
+  // between the floor's zero and the surface, wrapping too.
+  let reach = m.shell;
   var rel = m.position.xz - frame.camera.xz;
   rel = rel - 2.0 * reach * round(rel / (2.0 * reach));
   m.position = vec3f(frame.camera.x + rel.x, m.position.y, frame.camera.z + rel.y);
@@ -149,10 +164,19 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let shade = cloudShade(p, t) * (1.0 - 0.85 * floating);
   let toward = scattered(dot(sun, -view), 0.6) * 4.0 * 3.14159265;
   let sunlit = frame.sunlight.rgb * focus * down * shade * (0.3 + toward);
-  let light = (frame.skylight.rgb * 0.9 + sunlit * 1.3) * vec3f(0.95, 0.95, 0.9);
+  // Its own colour: most a pale grey, some the brown of detritus, some
+  // the green of plankton, a few white (shell, or a crystal).
+  var albedo = vec3f(0.9, 0.9, 0.86);
+  if (m.tint < 0.25) { albedo = vec3f(0.85, 0.7, 0.5); }
+  else if (m.tint < 0.4) { albedo = vec3f(0.62, 0.82, 0.55); }
+  else if (m.tint > 0.93) { albedo = vec3f(1.1, 1.1, 1.1); }
+  let light = (frame.skylight.rgb * 0.9 + sunlit * 1.3) * albedo;
   // Fading at the box's sides, where it wraps; and toward the near plane.
   let rel = abs(p.xz - frame.camera.xz);
-  let edge = 1.0 - smoothstep(0.75 * pool.reach, pool.reach, max(rel.x, rel.y));
+  let edge = 1.0 - smoothstep(0.75 * m.shell, m.shell, max(rel.x, rel.y));
+  // In drifts: thicker in some water than in other, a metre or two across.
+  let drifts = 0.35 + 0.65 * smoothstep(-0.35, 0.45,
+    noise(p.xz / 1.4 + vec2f(p.y * 0.8, -p.y * 0.5) + 31.0));
   var out : Out;
   out.position = frame.viewProj * vec4f(world, 1.0);
   out.uv = corner;
@@ -161,7 +185,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   // Fainter the farther: what is far is many flecks to a pixel's
   // sight of the water, not a point.
   out.alpha = clamp(coverage * 1.5, 0.08, 1.0) * edge * smoothstep(0.05, 0.12, dist)
-    * (1.0 - 0.6 * smoothstep(1.5, 6.0, dist));
+    * (1.0 - 0.5 * smoothstep(1.5, 6.0, dist)) * drifts;
   return out;
 }
 

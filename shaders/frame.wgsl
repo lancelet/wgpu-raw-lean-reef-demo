@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 448 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 480 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -30,6 +30,8 @@ struct Frame {
   shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
   swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
   swellK   : vec4f,  // the swell's four waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber)
+  reef     : vec4f,  // the reef's field's box: its corner (xyz), a cell's width (Reef.reefOrigin, reefCell)
+  reefDims : vec4f,  // its grid's points along x, y, z; w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -49,6 +51,9 @@ const causticBrightest = 8.0;
 // frame): the height and the slopes at each point of a grid over one
 // tile, `seaPoints` a side.
 @group(0) @binding(7) var<storage, read> sea : array<vec4f>;
+// The reef's framework, the bommies' signed distance field
+// (`shaders/reefbake.wgsl`): negative in the rock.
+@group(0) @binding(8) var reefField : texture_3d<f32>;
 const seaPoints = 256u;
 
 // The swell at `xz`, in the world, at time `t`: what is left of the
@@ -404,4 +409,43 @@ fn debrisAt(xz : vec2f, offset : vec2f, t : f32, edge : f32) -> vec2f {
     }
   }
   return vec2f(cover, kind);
+}
+
+// The reef's framework's distance at `p`, in metres, negative in the rock:
+// between the field's points (`blended`), or the nearest's; far, outside
+// its box.
+fn reefDistance(p : vec3f, blended : bool) -> f32 {
+  let g = (p - frame.reef.xyz) / frame.reef.w;
+  let top = frame.reefDims.xyz - 1.0;
+  if (any(g < vec3f(0.0)) || any(g > top)) { return 100.0; }
+  if (!blended) { return textureLoad(reefField, vec3i(round(g)), 0).r; }
+  let i = vec3i(floor(min(g, top - 0.001)));
+  let f = g - vec3f(i);
+  let a = mix(textureLoad(reefField, i, 0).r, textureLoad(reefField, i + vec3i(1, 0, 0), 0).r, f.x);
+  let b = mix(textureLoad(reefField, i + vec3i(0, 1, 0), 0).r, textureLoad(reefField, i + vec3i(1, 1, 0), 0).r, f.x);
+  let c = mix(textureLoad(reefField, i + vec3i(0, 0, 1), 0).r, textureLoad(reefField, i + vec3i(1, 0, 1), 0).r, f.x);
+  let d = mix(textureLoad(reefField, i + vec3i(0, 1, 1), 0).r, textureLoad(reefField, i + vec3i(1, 1, 1), 0).r, f.x);
+  return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+
+// How the reef's framework shades `p` on the sand: the sky it hides
+// (occlusion, 1 none), and the sun (its shadow, 1 none), marched through
+// the field toward the sun, between the field's points (its nearest
+// point's would draw the cells' steps on the sand). The penumbra widens
+// with the distance to what casts it, as the sun's disc and the light
+// scattered about it make it.
+fn reefShade(p : vec3f) -> vec2f {
+  let near = reefDistance(p, true);
+  if (near > 6.0) { return vec2f(1.0); }
+  let ao = mix(0.45, 1.0, smoothstep(0.0, 1.2, near));
+  let sun = frame.sun.xyz;
+  var t = max(near, 0.05);
+  var lit = 1.0;
+  for (var s = 0; s < 24; s++) {
+    let h = reefDistance(p + sun * t, true);
+    lit = min(lit, 0.5 + 0.5 * h / (0.06 * t + 0.02));
+    t += clamp(h * 0.8, 0.04, 0.5);
+    if (lit < 0.0 || t > 7.0) { break; }
+  }
+  return vec2f(ao, smoothstep(0.0, 1.0, clamp(lit, 0.0, 1.0)));
 }

@@ -1,6 +1,7 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
+import Reef.Bommies
 import Reef.Caustics
 import Reef.Snow
 import Reef.Grains
@@ -87,6 +88,8 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
+  /-- The reef's framework: the bommies. -/
+  bommies  : Bommies
   /-- The marine snow, and the last frame's time, for its step. -/
   snow     : Snow
   lastTime : IO.Ref Float
@@ -199,7 +202,9 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
     ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]
     ++ [w.swellAtWind, w.swellPeriod, w.swellSpread, 0]
-    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList).foldl
+    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList
+    ++ [reefOrigin.x, reefOrigin.y, reefOrigin.z, reefCell]
+    ++ (let (nx, ny, nz) := reefDims; [nx.toFloat, ny.toFloat, nz.toFloat, 0])).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -258,7 +263,7 @@ ripples `ripples` and its grains `grains` (baked here), under `water`
 (its caustics baked here too); timing its passes if `timestamps`. -/
 def Renderer.create (device : Device) (format : TextureFormat)
     (floor : Floor) (ripples : Ripples) (grains : Grains) (water : Water)
-    (timestamps : Bool := false) : IO Renderer := do
+    (sun : Sun) (timestamps : Bool := false) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
   -- nodes, and the tiles, so that one bind group serves them all (a
   -- pipeline's own layout is exclusive to it).
@@ -280,7 +285,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 6, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 7, visibility := .vertex ||| .fragment ||| .compute,
-        buffer := { type := .readOnlyStorage } }
+        buffer := { type := .readOnlyStorage } },
+      { binding := 8, visibility := .fragment,
+        texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } }
     ]
   }
   let layout ← device.createPipelineLayout {
@@ -294,6 +301,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
   let snow ← Snow.create device water shared frameLayout sceneFormat depthFormat
+  let bommies ← Bommies.create device sun.direction shared frameLayout sceneFormat depthFormat
   let mirrorLayout ← device.createBindGroupLayout {
     label   := "reflection"
     entries := #[
@@ -403,7 +411,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, textureView := some grainTile.view },
       { binding := 5, textureView := some horizons.view },
       { binding := 6, textureView := some caustics.view },
-      { binding := 7, buffer := some caustics.field }
+      { binding := 7, buffer := some caustics.field },
+      { binding := 8, textureView := some bommies.fieldView }
     ]
   }
   -- The reflection's: the same, but a mirrored frame and its own nodes.
@@ -423,11 +432,12 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, textureView := some grainTile.view },
       { binding := 5, textureView := some horizons.view },
       { binding := 6, textureView := some caustics.view },
-      { binding := 7, buffer := some caustics.field }
+      { binding := 7, buffer := some caustics.field },
+      { binding := 8, textureView := some bommies.fieldView }
     ]
   }
   return {
-    device, format, backdrop, surface, snow, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
+    device, format, backdrop, surface, snow, bommies, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
     mirrorSampler, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
     shaftSampler, resolve, resolveLayout
@@ -620,6 +630,8 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.draw 3 1 0 0
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)
+  r.bommies.draw pass
+  pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.surface
   pass.setBindGroup 1 (some depth.mirrorData) #[]
   pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)

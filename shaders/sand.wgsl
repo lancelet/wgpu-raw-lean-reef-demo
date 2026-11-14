@@ -320,8 +320,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
-  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded;
-  let light = frame.skylight.rgb * cavity
+  // And the bommies' shadows, and the sky they hide about their feet.
+  let reef = reefShade(world);
+  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded * reef.y;
+  let light = frame.skylight.rgb * cavity * reef.x
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;
   return vec4f(fogged(color, in.relative), 1.0);

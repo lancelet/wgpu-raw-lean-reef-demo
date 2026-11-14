@@ -264,7 +264,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
-      app.ripples app.grains app.water
+      app.ripples app.grains app.water app.sun
     if let some path := options.tile then
       dumpTile wgpu device renderer.ripples app.ripples.texels path
       let stem := (path.splitOn ".").dropLast
@@ -290,7 +290,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
-    initial.ripples initial.grains initial.water timestamps
+    initial.ripples initial.grains initial.water initial.sun timestamps
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←

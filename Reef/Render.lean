@@ -1,6 +1,7 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
+import Reef.Bommies
 import Reef.Caustics
 import Reef.Snow
 import Reef.Grains
@@ -87,6 +88,12 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
+  /-- The reef's framework: the bommies. -/
+  bommies  : Bommies
+  /-- The seabed's map, and its bake: run once, on the first frame, when
+  the frame's uniforms hold the floor and the sun. -/
+  seabed   : Seabed
+  seabedBaked : IO.Ref Bool
   /-- The marine snow, and the last frame's time, for its step. -/
   snow     : Snow
   lastTime : IO.Ref Float
@@ -171,7 +178,8 @@ the swell, with its waves' wave numbers): 448 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
-    (ripples : Ripples) (grains : Grains) (sun : Sun) (water : Water) :
+    (ripples : Ripples) (grains : Grains) (sun : Sun) (water : Water)
+    (envelope : Bool := false) :
     ByteArray :=
   let light := sun.direction
   let pixel := 2 * tanHalf / max height 1
@@ -199,7 +207,9 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
     ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]
     ++ [w.swellAtWind, w.swellPeriod, w.swellSpread, 0]
-    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList).foldl
+    ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList
+    ++ [reefOrigin.x, reefOrigin.y, reefOrigin.z, reefCell]
+    ++ (let (nx, ny, nz) := reefDims; [nx.toFloat, ny.toFloat, nz.toFloat, if envelope then 1 else 0])).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -258,7 +268,7 @@ ripples `ripples` and its grains `grains` (baked here), under `water`
 (its caustics baked here too); timing its passes if `timestamps`. -/
 def Renderer.create (device : Device) (format : TextureFormat)
     (floor : Floor) (ripples : Ripples) (grains : Grains) (water : Water)
-    (timestamps : Bool := false) : IO Renderer := do
+    (sun : Sun) (timestamps : Bool := false) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
   -- nodes, and the tiles, so that one bind group serves them all (a
   -- pipeline's own layout is exclusive to it).
@@ -271,7 +281,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
         buffer := { type := .readOnlyStorage } },
       { binding := 2, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
-      { binding := 3, visibility := .vertex ||| .fragment,
+      { binding := 3, visibility := .vertex ||| .fragment ||| .compute,
         sampler := { type := .filtering } },
       { binding := 4, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
@@ -280,7 +290,13 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 6, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 7, visibility := .vertex ||| .fragment ||| .compute,
-        buffer := { type := .readOnlyStorage } }
+        buffer := { type := .readOnlyStorage } },
+      { binding := 8, visibility := .fragment ||| .compute,
+        texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } },
+      { binding := 9, visibility := .vertex ||| .fragment ||| .compute,
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 10, visibility := .vertex ||| .fragment ||| .compute,
+        texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }
   let layout ← device.createPipelineLayout {
@@ -294,6 +310,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
   let snow ← Snow.create device water shared frameLayout sceneFormat depthFormat
+  let bommies ← Bommies.create device sun.direction shared frameLayout sceneFormat depthFormat
   let mirrorLayout ← device.createBindGroupLayout {
     label   := "reflection"
     entries := #[
@@ -392,10 +409,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let caustics ← Caustics.bake device water
   let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
-  let data ← device.createBindGroup {
-    label   := "frame"
-    layout  := frameLayout
-    entries := #[
+  let frameEntries (seabedView flowView : TextureView) : Array BindGroupEntry := #[
       { binding := 0, buffer := some frame },
       { binding := 1, buffer := some mesh.nodes },
       { binding := 2, textureView := some tile.view },
@@ -403,8 +417,19 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, textureView := some grainTile.view },
       { binding := 5, textureView := some horizons.view },
       { binding := 6, textureView := some caustics.view },
-      { binding := 7, buffer := some caustics.field }
+      { binding := 7, buffer := some caustics.field },
+      { binding := 8, textureView := some bommies.fieldView },
+      { binding := 9, textureView := some seabedView },
+      { binding := 10, textureView := some flowView }
     ]
+  let seabed ← Seabed.create device shared frameLayout
+    (← device.createBindGroup {
+      label := "frame for the seabed's bake", layout := frameLayout
+      entries := frameEntries (← placeholderView device) (← placeholderView device) })
+  let data ← device.createBindGroup {
+    label   := "frame"
+    layout  := frameLayout
+    entries := frameEntries seabed.view seabed.flowView
   }
   -- The reflection's: the same, but a mirrored frame and its own nodes.
   let mirrorFrame ← createBuffer device "reflection frame" .uniform
@@ -423,11 +448,14 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, textureView := some grainTile.view },
       { binding := 5, textureView := some horizons.view },
       { binding := 6, textureView := some caustics.view },
-      { binding := 7, buffer := some caustics.field }
+      { binding := 7, buffer := some caustics.field },
+      { binding := 8, textureView := some bommies.fieldView },
+      { binding := 9, textureView := some seabed.view },
+      { binding := 10, textureView := some seabed.flowView }
     ]
   }
   return {
-    device, format, backdrop, surface, snow, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
+    device, format, backdrop, surface, snow, bommies, seabed, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
     mirrorSampler, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
     shaftSampler, resolve, resolveLayout
@@ -445,6 +473,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     timing  := ← Timing.create device timestamps passes.size
     frames  := ← IO.mkRef 0
     lastTime := ← IO.mkRef 0
+    seabedBaked := ← IO.mkRef false
   }
 
 /-- The floor's mesh made again, for `floor` as it is now: its patch; the
@@ -549,7 +578,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   r.queue.writeBuffer r.frame 0
     (frameBytes viewProj app.camera (fovY / 2).tan aspect app.width.toFloat
       app.height.toFloat app.time app.grid app.floor floor.cells app.ripples
-      app.grains app.sun app.water)
+      app.grains app.sun app.water app.overlays.envelope)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0
@@ -586,6 +615,12 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   r.lastTime.set app.time
   r.snow.step r.queue encoder r.data (min 0.1 (max 0 (app.time - last)))
     app.water.snowReach app.time
+  -- The bommies' fine level, about the eye.
+  r.bommies.update r.queue encoder eye
+  -- The seabed's map, once.
+  unless ← r.seabedBaked.get do
+    r.seabed.bake encoder
+    r.seabedBaked.set true
   -- The reflection, first: the sand as the surface mirrors it.
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{ view := some depth.mirror, loadOp := .clear,
@@ -618,6 +653,9 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.backdrop
   pass.draw 3 1 0 0
+  -- The bommies before the sand, which they hide much of.
+  r.bommies.draw pass
+  pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)
   pass.setPipeline r.surface

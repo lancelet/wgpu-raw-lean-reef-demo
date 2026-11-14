@@ -26,8 +26,13 @@ structure Options where
   /-- Where the camera starts, if not where the demo puts it: `x,y,z` in
   metres, and `yaw,pitch` in degrees. -/
   camera     : Option (Float × Float × Float × Float × Float) := none
+  /-- For a screenshot: the camera flown at this velocity, metres a
+  second, through the frames before it (for testing what follows it). -/
+  fly        : Option (Float × Float × Float) := none
   /-- Whether the wireframe, and the grid, show at the start, if said. -/
   wireframe  : Option Bool := none
+  /-- Whether the bommies' envelope meshes show in place of the rock. -/
+  envelope   : Option Bool := none
   grid       : Option Bool := none
   /-- The window's size, in pixels, if said: for a screenshot or a timing
   at the size of the screen. -/
@@ -55,7 +60,7 @@ structure Options where
 /-- How to run the demo. -/
 def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
-    [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
+    [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] [--envelope on|off] \
     [--size WIDTHxHEIGHT] [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR] \
     [--waves DEGREES] [--wind SPEED] [--depth METRES] [--tile FILE] \
     [--grain-tile FILE] [--caustic-tile FILE]"
@@ -91,6 +96,10 @@ def Options.parse : List String → Except String Options
     let some [x, y, z, yaw, pitch] := (spec.splitOn ",").mapM parseFloat
       | throw s!"not a camera: {spec} (X,Y,Z,YAW,PITCH)"
     return { ← Options.parse rest with camera := some (x, y, z, yaw, pitch) }
+  | "--fly" :: spec :: rest => do
+    let some [x, y, z] := (spec.splitOn ",").mapM parseFloat
+      | throw s!"not a velocity: {spec} (X,Y,Z)"
+    return { ← Options.parse rest with fly := some (x, y, z) }
   | "--wind" :: speed :: rest => do
     let some speed := parseFloat speed | throw s!"not a speed: {speed}"
     return { ← Options.parse rest with wind := some speed }
@@ -108,6 +117,9 @@ def Options.parse : List String → Except String Options
   | "--wireframe" :: on :: rest => do
     let some on := parseSwitch on | throw s!"not on or off: {on}"
     return { ← Options.parse rest with wireframe := some on }
+  | "--envelope" :: on :: rest => do
+    let some on := parseSwitch on | throw s!"not on or off: {on}"
+    return { ← Options.parse rest with envelope := some on }
   | "--grid" :: on :: rest => do
     let some on := parseSwitch on | throw s!"not on or off: {on}"
     return { ← Options.parse rest with grid := some on }

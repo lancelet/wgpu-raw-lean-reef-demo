@@ -17,7 +17,8 @@ As a modelling program's viewport, with no modes: two fingers on a trackpad
 browser), dolly; with Alt, turn in place. The main mouse button, dragged,
 does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
-back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
+back where it started; 1 shows the wireframe, or hides it, 2 the grid, and
+3 the bommies' envelope meshes in place of the rock;
 `[` and `]` halve and double the detail, how finely every mesh is made;
 `,` and `.` swing the sun round, `-` and `=` lower and raise it; F fills
 the screen, or leaves it; Escape ends the demo, natively.
@@ -308,6 +309,9 @@ structure Overlays where
   wireframe : Bool := false
   /-- The grid, a line a metre at the floor's height. -/
   grid      : Bool := false
+  /-- The bommies' envelope meshes alone, faceted, in place of the rock
+  marched in from them (`shaders/bommie.wgsl`). -/
+  envelope  : Bool := false
   deriving Repr, Inhabited
 
 /-- What `update` asks the program to do, which it cannot itself. -/
@@ -436,6 +440,8 @@ def update (event : Event) (a : App) : App × List Command :=
     else if code == keyOf '1' then
       ({ a with overlays.wireframe := !a.overlays.wireframe }, [])
     else if code == keyOf '2' then ({ a with overlays.grid := !a.overlays.grid }, [])
+    else if code == keyOf '3' then
+      ({ a with overlays.envelope := !a.overlays.envelope }, [])
     else if code == keyOf '[' then
       ({ a with detail := max 0.25 (a.detail / 2) }, [.remesh])
     else if code == keyOf ']' then

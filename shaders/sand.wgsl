@@ -23,9 +23,28 @@ struct Out {
 
 // Where `xz`, in the world, is on the ripples' tile: along the waves, and
 // across them, in tiles (`shaders/ripples.wgsl`).
+// About the bommies, the surge's flow wraps round them, and the ripples,
+// which lie along its potential's lines, wrap with them: the tile is read
+// by the flow's potential and stream function, which the seabed's map
+// gives (shaders/seabed.wgsl).
 fn rippleUV(xz : vec2f) -> vec2f {
   let dir = frame.ripple.xy;
-  return vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x))) / frame.tiling.x;
+  return (vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x))) + flowAt(xz).xy)
+    / frame.tiling.x;
+}
+
+// The ripples' own axes at a point whose flow is `flow` (`flowAt`): the
+// gradients of the potential and of the stream function, in the world;
+// unit on the open floor, turned and scaled about the bommies.
+fn rippleAxes(flow : vec4f) -> mat2x2f {
+  let dir = frame.ripple.xy;
+  let along = dir + flow.zw;
+  return mat2x2f(along, vec2f(-along.y, along.x));
+}
+
+// A step `v` in the world as a step on the ripples' tile, by those axes.
+fn rippleStep(v : vec2f, axes : mat2x2f) -> vec2f {
+  return vec2f(dot(v, axes[0]), dot(v, axes[1])) / frame.tiling.x;
 }
 
 // What the ripples add to the floor's height at `xz`, in the world, for
@@ -56,7 +75,12 @@ fn floorAt(cellXZ : vec2f) -> vec3f {
   let xz = cellXZ * frame.eye.z - frame.eye.xy;
   let world = xz + frame.camera.xz;
   let dist = length(xz);
-  let y = height(world) + rippleHeight(world, dist) * rippleFade(dist);
+  // (The ripples as freely as the sand moves: dying out in the rock's
+  // lee.)
+  let bed = seabedAt(world);
+  let y = baseHeight(world) + bed.z
+    + rippleHeight(world, dist) * rippleFade(dist)
+      * min(bed.w, 1.2) * (1.0 - 0.75 * smoothstep(0.05, 0.2, -bed.z));
   return vec3f(xz.x, y - frame.camera.y, xz.y);
 }
 
@@ -114,95 +138,10 @@ fn morph(dist : f32, level : f32) -> f32 {
   return out;
 }
 
-// The grains' tile is small, and would show its repeating a few tile
-// widths off; so it is read through a grid of triangles, each corner of
-// which reads the tile from a place of its own, and the three readings
-// blended by how near the corners are (Heitz and Neyret, "High-
-// Performance By-Example Noise using a Histogram-Preserving Blending
-// Operator", 2018): no two triangles show the same part of the tile,
-// and no seam between them. The triangles are smaller than the tile, so
-// that it never repeats even within one (a grid of a few tiles across
-// let it, and the repeat showed at a metre). A blend of three is flatter
-// than any one, so what varies is scaled back up by the weights' length:
-// the tilt, which varies about zero, and the brightness, which varies
-// about a half.
-const grainTriangles = 0.4;  // tile widths across one
+// (The grains' tile is read through a grid of triangles, `grainsAt`,
+// in shaders/frame.wgsl, which the rock's sand reads it through too.)
 
-// Where `uv`, in tile widths, falls in the grid of triangles: the
-// three corners, and how near each (the barycentric weights).
-fn triangleAt(uv : vec2f) -> mat3x3f {
-  let skewed = mat2x2f(1.0, 0.0, -0.57735027, 1.15470054) * (uv / grainTriangles);
-  let base = floor(skewed);
-  let f = fract(skewed);
-  if (f.x + f.y < 1.0) {
-    return mat3x3f(vec3f(base, 1.0 - f.x - f.y),
-                   vec3f(base + vec2f(1.0, 0.0), f.x),
-                   vec3f(base + vec2f(0.0, 1.0), f.y));
-  }
-  return mat3x3f(vec3f(base + vec2f(1.0, 1.0), f.x + f.y - 1.0),
-                 vec3f(base + vec2f(1.0, 0.0), 1.0 - f.y),
-                 vec3f(base + vec2f(0.0, 1.0), 1.0 - f.x));
-}
 
-// The place a corner `corner` of the grid reads the tile from: an
-// offset of its own, in tile widths.
-fn cornerOffset(corner : vec2f) -> vec2f {
-  let c = vec2i(corner);
-  var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ 0x3u;
-  h = h ^ (h >> 15u);
-  h = h * 0x2c1b3c6du;
-  h = h ^ (h >> 12u);
-  return vec2f(f32(h & 0xffffu), f32((h >> 16u) & 0xffffu)) / 65535.0;
-}
-
-// The grains' tile at `xz`, in the world, read through the grid of
-// triangles, for a pixel whose footprint is `along` and `across`, the
-// grains `coarser` times their size (the sand sorted: coarser in the
-// ripples' troughs, finer on their crests): the normal, not unit
-// (shorter where the filtering has averaged it), and the brightness. The
-// tilt and the brightness are scaled back up to the tile's contrast; the
-// normal's height is the plain blend, as its length is what is wanted
-// of it.
-fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32,
-            still : f32) -> vec4f {
-  let uv = xz / frame.grain.x;
-  let corners = triangleAt(uv);
-  var sum = vec4f(0.0);
-  var weights = 0.0;
-  for (var i = 0; i < 3; i++) {
-    let corner = corners[i];
-    // Scaled about the corner, not the world's origin: the scale varies
-    // over the ripples, and about the origin that would smear the tile.
-    let cornerUV = mat2x2f(1.0, 0.0, 0.5, 0.8660254) * corner.xy * grainTriangles;
-    let local = (uv - cornerUV) / coarser + cornerUV;
-    // The layer with the traces where the sand is still, the one without
-    // where it moves: both, blended, where it is between.
-    let at = local + cornerOffset(corner.xy);
-    let dx = along / (frame.grain.x * coarser);
-    let dy = across / (frame.grain.x * coarser);
-    let read = mix(textureSampleGrad(grains, rippleSampler, at, 1, dx, dy),
-                   textureSampleGrad(grains, rippleSampler, at, 0, dx, dy), still);
-    sum += corner.z * (read - 0.5);
-    weights += corner.z * corner.z;
-  }
-  let scaled = sum / sqrt(weights);
-  return vec4f(scaled.x * 2.0, sum.y * 2.0, scaled.z * 2.0, scaled.w + 0.5);
-}
-
-// Oren and Nayar's diffuse lighting of a rough surface, `sigma2` the
-// square of its roughness (the spread of its facets, in radians), with
-// normal `n`, lit from `l`, seen from `v`: like Lambert's, but a rough
-// surface shows the same from every angle when lit from behind the
-// viewer, and darkens toward the light, as sand does.
-fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
-  let nl = max(dot(n, l), 0.0);
-  let nv = max(dot(n, v), 0.0);
-  let a = 1.0 - 0.5 * sigma2 / (sigma2 + 0.33);
-  let b = 0.45 * sigma2 / (sigma2 + 0.09);
-  let s = dot(l, v) - nl * nv;
-  let t = select(1.0, max(nl, nv), s > 0.0);
-  return nl * (a + b * s / max(t, 1e-4));
-}
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
@@ -226,11 +165,17 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // that far off, where they are finer than a pixel, they average away):
   // in heights per wavelength along the waves and across, made metres
   // per metre, and turned to the world's axes.
+  let flow = flowAt(world.xz);
+  let axes = rippleAxes(flow);
   let tile = textureSampleGrad(ripples, rippleSampler, rippleUV(world.xz),
-                               rippleUV(footAlong), rippleUV(footAcross));
-  let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z;
-  let dir = frame.ripple.xy;
-  slope += along.x * dir + along.y * vec2f(-dir.y, dir.x);
+                               rippleStep(footAlong, axes), rippleStep(footAcross, axes));
+  // As freely as the sand moves here (the seabed's map): the ripples
+  // die out where the rock shelters the sand.
+  let bed = seabedAt(world.xz);
+  // (And in the moat, scoured to its coarse floor, hardly at all.)
+  let rippled = min(bed.w, 1.2) * (1.0 - 0.75 * smoothstep(0.05, 0.2, -bed.z));
+  let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z * rippled;
+  slope += along.x * axes[0] + along.y * axes[1];
   // The grains' tilt, from their tile over the world's axes, filtered
   // likewise: where they are finer than the pixel, the normal averages
   // to flat, and shorter (the roughness they leave, Toksvig's measure,
@@ -238,7 +183,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // The sand sorted by the ripples: the water carries the fine grains up
   // the crests and leaves the coarse in the troughs, which are a little
   // darker for it.
-  let sorted = mix(1.35, 0.8, tile.r);
+  // And sorted by the rock: the moat at its foot, scoured, keeps only the
+  // coarse, and bits of the rock itself; the tails in its lee are the
+  // fine the slack water dropped.
+  let sorted = mix(1.35, 0.8, tile.r) * sandSorting(bed);
   // What lives in the sand digs where the sand is still: in the ripples'
   // troughs, not on their crests, which the water sweeps; and in
   // colonies, patches a few ripples across with bare sand between (a
@@ -253,7 +201,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   var grain = far;
   if (farness < 1.0) {
     let colonies = smoothstep(0.05, 0.4, noise(world.xz / 0.5 + 77.0));
-    let still = (1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies;
+    // (And where the rock shelters the sand from the surge: there all
+    // of it is still.)
+    let still = max((1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies,
+                    (1.0 - smoothstep(0.3, 0.8, bed.w)) * mix(0.5, 1.0, colonies));
     grain = mix(grainsAt(world.xz, footAlong, footAcross, sorted, still), far, farness);
   }
   let tilt = grain.xyz;
@@ -268,21 +219,23 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // Whether the sun is up over the ripples here: the horizon toward it,
   // from the four the tile holds, against its elevation; softly, as the
   // horizons, filtered, are a mean over what is under the pixel.
-  let sunAcross = vec2f(dot(sun.xz, dir), dot(sun.xz, vec2f(-dir.y, dir.x)));
+  let sunAcross = vec2f(dot(sun.xz, normalize(axes[0])), dot(sun.xz, normalize(axes[1])));
   let toward = max(vec4f(sunAcross.x, -sunAcross.x, sunAcross.y, -sunAcross.y),
                    vec4f(0.0));
   let rims = textureSampleGrad(horizons, rippleSampler, rippleUV(world.xz),
-                               rippleUV(footAlong), rippleUV(footAcross));
-  let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963;
+                               rippleStep(footAlong, axes), rippleStep(footAcross, axes));
+  let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963 * rippled;
   let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
-  let sand = vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z)
-    * mix(0.88, 1.0, tile.r);
+  // The moat's coarse sand greyer and darker, flecked with the rock's
+  // own bits; the tails' fine sand paler.
+  // (Its rubble, bits of the rock, is the scatter's to place.)
+  let sand = sandColour(bed, grain.a, tile.r);
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point
   // meets the surface, so that they drift down the sun's slant).
-  let cavity = mix(1.0, tile.a, frame.tiling.w);
+  let cavity = mix(1.0, tile.a, frame.tiling.w * min(rippled, 1.0));
   let toSurface = (frame.water.x - world.y) / max(sun.y, 0.1);
   // Where the sun's ray through this point meets the surface, and where
   // the swell has carried the chop there from: the caustics slide with
@@ -320,8 +273,10 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
-  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded;
-  let light = frame.skylight.rgb * cavity
+  // And the bommies' shadows, and the sky they hide about their feet.
+  let reef = bed.xy;
+  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded * reef.y;
+  let light = frame.skylight.rgb * cavity * reef.x
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;
   return vec4f(fogged(color, in.relative), 1.0);

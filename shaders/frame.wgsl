@@ -54,6 +54,10 @@ const causticBrightest = 8.0;
 // The reef's framework, the bommies' signed distance field
 // (`shaders/reefbake.wgsl`): negative in the rock.
 @group(0) @binding(8) var reefField : texture_3d<f32>;
+// The seabed's map over the framework's box, baked once
+// (shaders/seabed.wgsl): the sky and the sun the framework leaves the
+// sand.
+@group(0) @binding(9) var seabed : texture_2d<f32>;
 const seaPoints = 256u;
 
 // The swell at `xz`, in the world, at time `t`: what is left of the
@@ -441,11 +445,21 @@ fn reefShade(p : vec3f) -> vec2f {
   let sun = frame.sun.xyz;
   var t = max(near, 0.05);
   var lit = 1.0;
-  for (var s = 0; s < 24; s++) {
+  for (var s = 0; s < 64; s++) {
     let h = reefDistance(p + sun * t, true);
     lit = min(lit, 0.5 + 0.5 * h / (0.06 * t + 0.02));
-    t += clamp(h * 0.8, 0.04, 0.5);
+    t += clamp(h * 0.7, 0.02, 0.4);
     if (lit < 0.0 || t > 7.0) { break; }
   }
   return vec2f(ao, smoothstep(0.0, 1.0, clamp(lit, 0.0, 1.0)));
 }
+
+// The seabed's map at `xz` (shaders/seabed.wgsl): the sky the framework
+// leaves the sand there, and the sun; all of both outside its box.
+fn seabedAt(xz : vec2f) -> vec4f {
+  let extent = (frame.reefDims.xz - 1.0) * frame.reef.w;
+  let uv = (xz - frame.reef.xz) / extent;
+  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return vec4f(1.0, 1.0, 0.0, 0.0); }
+  return textureSampleLevel(seabed, rippleSampler, uv, 0.0);
+}
+

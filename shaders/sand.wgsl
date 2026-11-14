@@ -321,7 +321,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
   // And the bommies' shadows, and the sky they hide about their feet.
-  let reef = reefShade(world);
+  let reef = seabedAt(world.xz).xy;
   let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded * reef.y;
   let light = frame.skylight.rgb * cavity * reef.x
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;

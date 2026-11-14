@@ -214,7 +214,7 @@ def Bommies.create (device : Device) (sun : Vec3) (shared : String)
     vertex   := { module := drawModule, entryPoint := some "vs" }
     fragment := some {
       module := drawModule, entryPoint := some "fs", targets := #[{ format := format }] }
-    primitive := { topology := .triangleList, cullMode := .none }
+    primitive := { topology := .triangleList, cullMode := .back }
     depthStencil := some {
       format := depthFormat, depthWriteEnabled := .true, depthCompare := .less }
   }
@@ -226,5 +226,63 @@ def Bommies.draw (b : Bommies) (pass : RenderPassEncoder) : IO Unit := do
   pass.setPipeline b.pipeline
   pass.setIndexBuffer b.indices .uint32 0 (reefMaxIndices * 4).toUInt64
   pass.drawIndexedIndirect b.args 0
+
+/-- How many texels the seabed's map has along each side of the
+framework's box: a few centimetres each. -/
+def seabedSize : Nat := 1024
+
+/-- A 1×1 texture, to stand in a bind group for one a pass may not read
+while it writes it. -/
+def placeholderView (device : Device) : IO TextureView := do
+  let t ← device.createTexture {
+    label := "placeholder", usage := .textureBinding
+    size := { width := 1, height := 1 }, format := .rgba16Float }
+  t.createView none
+
+/-- The seabed's map over the framework's box (`shaders/seabed.wgsl`), and
+what bakes it. -/
+structure Seabed where
+  texture  : Texture
+  view     : TextureView
+  pipeline : ComputePipeline
+  /-- The frame's bind group as the bake sees it (without the map), and
+  the map's, writable. -/
+  frameData : BindGroup
+  data      : BindGroup
+
+/-- The seabed's map, to be baked with the frame's `shared` code under
+its `frameLayout`, `frameData` being the frame's bind group without the
+map itself. -/
+def Seabed.create (device : Device) (shared : String)
+    (frameLayout : BindGroupLayout) (frameData : BindGroup) : IO Seabed := do
+  let texture ← device.createTexture {
+    label := "seabed", usage := .storageBinding ||| .textureBinding
+    size := { width := seabedSize.toUInt32, height := seabedSize.toUInt32 }
+    format := .rgba16Float }
+  let view ← texture.createView none
+  let layout ← device.createBindGroupLayout {
+    label := "seabed"
+    entries := #[{ binding := 0, visibility := .compute
+                   storageTexture := { access := .writeOnly, format := .rgba16Float
+                                       viewDimension := .«2d» } }] }
+  let module ← createShader device "seabed" (shared ++ Shaders.seabed)
+  let pipeline ← device.createComputePipeline {
+    label := "seabed"
+    layout := some (← device.createPipelineLayout {
+      label := "seabed", bindGroupLayouts := #[frameLayout, layout] })
+    compute := { module, entryPoint := some "bakeSeabed" } }
+  let data ← device.createBindGroup {
+    label := "seabed", layout, entries := #[{ binding := 0, textureView := some view }] }
+  return { texture, view, pipeline, frameData, data }
+
+/-- Bake the seabed's map, in `encoder`. -/
+def Seabed.bake (s : Seabed) (encoder : CommandEncoder) : IO Unit := do
+  let pass ← encoder.beginComputePass none
+  pass.setPipeline s.pipeline
+  pass.setBindGroup 0 (some s.frameData) #[]
+  pass.setBindGroup 1 (some s.data) #[]
+  let groups := ((seabedSize + 7) / 8).toUInt32
+  pass.dispatchWorkgroups groups groups 1
+  pass.«end»
 
 end Reef

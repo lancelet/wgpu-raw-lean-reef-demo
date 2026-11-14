@@ -100,14 +100,17 @@ fn smoothMin(a : f32, b : f32, k : f32) -> f32 {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// A blob: an ellipsoid, narrower toward its base.
+// A blob: an ellipsoid above its middle; below, a column, narrowing to
+// its base and on down into the sand, so that nothing of the rock floats
+// (the sand's scour would have undercut it and it would have fallen).
 fn blob(p : vec3f, i : u32) -> f32 {
   let a = blobs[2u * i];
   let b = blobs[2u * i + 1u];
-  let q = p - a.xyz;
+  var q = p - a.xyz;
   let half = a.w * b.x;
   let lift = clamp((q.y + half) / (2.0 * half), 0.0, 1.0);
   let widen = mix(1.0 - b.y, 1.0, smoothstep(0.0, 0.6, lift));
+  q.y = max(q.y, 0.0);
   let r = vec3f(a.w * widen, half, a.w * widen);
   return (length(q / r) - 1.0) * min(r.x, r.y);
 }
@@ -238,12 +241,16 @@ fn facePass(@builtin(global_invocation_id) id : vec3u) {
     if (a == none || b == none || c == none || d == none) { continue; }
     let at = atomicAdd(&counts[1], 6u);
     if (at + 6u > maxIndices) { continue; }
+    // Wound to face out of the rock, whichever side of the edge it is on.
+    var b2 = b;
+    var d2 = d;
+    if (f0 >= 0.0) { b2 = d; d2 = b; }
     indices[at] = a;
-    indices[at + 1u] = b;
+    indices[at + 1u] = b2;
     indices[at + 2u] = c;
     indices[at + 3u] = a;
     indices[at + 4u] = c;
-    indices[at + 5u] = d;
+    indices[at + 5u] = d2;
   }
 }
 

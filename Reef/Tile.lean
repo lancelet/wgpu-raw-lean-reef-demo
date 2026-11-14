@@ -28,17 +28,16 @@ and draws into. -/
 def tileFormat : TextureFormat := .rgba8Unorm
 
 /-- A pipeline drawing one triangle with `module`'s `vs` and `fragment`
-into a target of `format` (a tile's), with no depth. -/
+into a `tileFormat` target, with no depth. -/
 def tilePipeline (device : Device) (label : String) (module : ShaderModule)
-    (fragment : String) (format : TextureFormat := tileFormat) :
-    IO RenderPipeline :=
+    (fragment : String) : IO RenderPipeline :=
   device.createRenderPipeline {
     label    := label
     vertex   := { module := module, entryPoint := some "vs" }
     fragment := some {
       module     := module
       entryPoint := some fragment
-      targets    := #[{ format := format }]
+      targets    := #[{ format := tileFormat }]
     }
   }
 

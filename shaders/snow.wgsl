@@ -73,7 +73,7 @@ fn placed(i : u32) -> Mote {
   m.position = vec3f(xz.x, mix(lowest, highest, rand(seed, 2u)), xz.y);
   let spread = exp((rand(seed, 3u) + rand(seed, 7u) - 1.0) * 2.2);
   let flake = select(1.0, 4.0, rand(seed, 8u) < 0.02);
-  m.radius = 0.0004 * scale * spread * flake;
+  m.radius = 0.0005 * scale * spread * flake;
   m.phase = rand(seed, 4u) * 6.2832;
   m.shell = shell;
   m.tint = rand(seed, 5u);
@@ -150,7 +150,7 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let size = m.radius + blur;
   // Never under a few pixels, a soft glow rather than a speck; fainter by
   // as much as it is drawn bigger than it is.
-  let least = dist * frame.camera.w * 3.6;
+  let least = dist * frame.camera.w * 4.0;
   let drawn = max(size, least);
   let coverage = (m.radius * m.radius) / (drawn * drawn);
   let world = relative + (frame.right.xyz * corner.x + frame.up.xyz * corner.y) * drawn;
@@ -179,16 +179,16 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let shade = cloudShade(p, t) * (1.0 - 0.85 * floating);
   let toward = scattered(dot(sun, -view), 0.6) * 4.0 * 3.14159265;
   let sunlit = frame.sunlight.rgb * focus * down * shade * (0.3 + toward);
-  // (Saturated beyond what they would be in hand: a faint warm dot over
-  // the water's blue averages toward grey.)
+  // (Half way between the film's pale motes and the living colours of
+  // real snow: warm, not white, not loud.)
   // Its own colour, after the film's motes but warmer and more living:
   // olive the most, brown next, a light tan, and only a few cream; each
   // its own shade of its kind. The water's colour comes between it and
   // the eye.
   let tone = 0.85 + 0.3 * fract(m.tint * 13.7);
-  var albedo = vec3f(0.62, 0.74, 0.2);                                         // olive
-  if (m.tint >= 0.4 && m.tint < 0.75) { albedo = vec3f(0.78, 0.46, 0.18); }    // brown
-  else if (m.tint >= 0.75 && m.tint < 0.95) { albedo = vec3f(0.84, 0.64, 0.34); } // tan
+  var albedo = vec3f(0.78, 0.84, 0.5);                                         // olive
+  if (m.tint >= 0.4 && m.tint < 0.75) { albedo = vec3f(0.88, 0.68, 0.46); }    // brown
+  else if (m.tint >= 0.75 && m.tint < 0.95) { albedo = vec3f(0.92, 0.82, 0.62); } // tan
   else if (m.tint >= 0.95) { albedo = vec3f(0.95, 0.9, 0.76); }                // cream
   albedo = albedo * tone;
   // The sky's light by its brightness, not its blue (the water's blue
@@ -208,8 +208,13 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   out.colour = light;
   // Fainter the farther: what is far is many flecks to a pixel's
   // sight of the water, not a point.
-  out.alpha = clamp(coverage * 1.5, 0.1, 0.8) * edge * smoothstep(0.05, 0.12, dist)
+  out.alpha = clamp(coverage * 1.8, 0.14, 0.8) * edge * smoothstep(0.05, 0.12, dist)
     * (1.0 - 0.5 * smoothstep(1.5, 6.0, dist)) * drifts
+    // As the film has them: thick where the light is, in the sunlit
+    // columns under the caustics' bright filaments and toward the
+    // surface; thin in the shade.
+    * mix(0.45, 1.5, smoothstep(0.6, 2.2, dot(focus * shade, vec3f(0.3, 0.5, 0.2))))
+    * mix(0.8, 1.2, p.y / frame.water.x)
     // And fainter the larger it looks: a mote filling many pixels is a
     // haze, not a solid disc.
     / (1.0 + max(2.0 * drawn / (dist * frame.camera.w) - 5.0, 0.0) * 0.12);

@@ -240,6 +240,10 @@ structure Water where
   texels        : Nat   := 512
   grid          : Nat   := 512
   margin        : Float := 0.6
+  /-- The surface as drawn from below (`shaders/surface.wgsl`): its grid,
+  cells a side, and how far from the camera it reaches, in metres. -/
+  surfaceGrid   : Nat   := 192
+  surfaceReach  : Float := 400
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

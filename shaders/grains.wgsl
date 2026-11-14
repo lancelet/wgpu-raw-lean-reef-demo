@@ -156,17 +156,25 @@ fn tracesAt(p : vec2f) -> vec2f {
   let grain = bake.grain.y;
   var height = 0.0;
   var shade = 1.0;
-  // Holes, in cells of fifteen grains, one to a quarter of them.
-  let holeCells = i32(round(texels / (grain * 15.0)));
+  // In patches: here many, there none, a field of noise over the tile
+  // saying which, three features across it; each kind its own.
+  let uv = p / texels * 3.0;
+  let holesHere = smoothstep(-0.3, 0.4, noise(uv + 2.0, 3));
+  let castsHere = smoothstep(-0.2, 0.5, noise(uv + 23.0, 3));
+  let scrapesHere = smoothstep(-0.3, 0.4, noise(uv + 41.0, 3));
+  // Holes, in cells of forty grains, one to a third of them.
+  let holeCells = i32(round(texels / (grain * 40.0)));
   let holeCell = texels / f32(holeCells);
   var base = vec2i(floor(p / holeCell));
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let c = base + vec2i(i, j);
       let seed = cellSeed(c, holeCells, 0x4u);
-      if (rand(seed, 0u) >= 0.25) { continue; }
+      if (rand(seed, 0u) >= 0.35 * holesHere) { continue; }
       let centre = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * holeCell;
-      let r = grain * (3.0 + 4.0 * rand(seed, 3u));
+      // Mostly small, a few large: the square of a draw.
+      let size = rand(seed, 3u);
+      let r = grain * (2.0 + 10.0 * size * size);
       let d = length(p - centre) / r;
       if (d < 1.0) {
         height -= grain * 2.0 * (1.0 - d * d);
@@ -176,16 +184,16 @@ fn tracesAt(p : vec2f) -> vec2f {
       }
     }
   }
-  // Castings, in cells of thirty grains, one to a fifth: eight mounds
+  // Castings, in cells of fifty grains, one to a quarter: eight mounds
   // along a curve that turns as it goes.
-  let castCells = i32(round(texels / (grain * 30.0)));
+  let castCells = i32(round(texels / (grain * 50.0)));
   let castCell = texels / f32(castCells);
   base = vec2i(floor(p / castCell));
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let c = base + vec2i(i, j);
       let seed = cellSeed(c, castCells, 0x5u);
-      if (rand(seed, 0u) >= 0.2) { continue; }
+      if (rand(seed, 0u) >= 0.25 * castsHere) { continue; }
       var at = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * castCell;
       var angle = tau * rand(seed, 3u);
       let turn = 0.9 * (rand(seed, 4u) - 0.5);
@@ -198,16 +206,16 @@ fn tracesAt(p : vec2f) -> vec2f {
       }
     }
   }
-  // Scrapes, in cells of twenty grains, one to a sixth: a groove along a
-  // short line, a grain deep.
-  let scrapeCells = i32(round(texels / (grain * 20.0)));
+  // Scrapes, in cells of forty grains, one to a quarter: a groove along
+  // a short line, a grain deep.
+  let scrapeCells = i32(round(texels / (grain * 40.0)));
   let scrapeCell = texels / f32(scrapeCells);
   base = vec2i(floor(p / scrapeCell));
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let c = base + vec2i(i, j);
       let seed = cellSeed(c, scrapeCells, 0x6u);
-      if (rand(seed, 0u) >= 0.17) { continue; }
+      if (rand(seed, 0u) >= 0.25 * scrapesHere) { continue; }
       let centre = (vec2f(c) + vec2f(rand(seed, 1u), rand(seed, 2u))) * scrapeCell;
       let angle = tau * rand(seed, 3u);
       let along = vec2f(cos(angle), sin(angle));

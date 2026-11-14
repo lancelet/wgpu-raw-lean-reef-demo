@@ -143,20 +143,27 @@ fn cornerOffset(corner : vec2f) -> vec2f {
 }
 
 // The grains' tile at `xz`, in the world, read through the grid of
-// triangles, for a pixel whose footprint is `along` and `across`: the
-// normal, not unit (shorter where the filtering has averaged it), and
-// the brightness. The tilt and the brightness are scaled back up to the
-// tile's contrast; the normal's height is the plain blend, as its
-// length is what is wanted of it.
-fn grainsAt(xz : vec2f, along : vec2f, across : vec2f) -> vec4f {
+// triangles, for a pixel whose footprint is `along` and `across`, the
+// grains `coarser` times their size (the sand sorted: coarser in the
+// ripples' troughs, finer on their crests): the normal, not unit
+// (shorter where the filtering has averaged it), and the brightness. The
+// tilt and the brightness are scaled back up to the tile's contrast; the
+// normal's height is the plain blend, as its length is what is wanted
+// of it.
+fn grainsAt(xz : vec2f, along : vec2f, across : vec2f, coarser : f32) -> vec4f {
   let uv = xz / frame.grain.x;
   let corners = triangleAt(uv);
   var sum = vec4f(0.0);
   var weights = 0.0;
   for (var i = 0; i < 3; i++) {
     let corner = corners[i];
-    let read = textureSampleGrad(grains, rippleSampler, uv + cornerOffset(corner.xy),
-                                 along / frame.grain.x, across / frame.grain.x);
+    // Scaled about the corner, not the world's origin: the scale varies
+    // over the ripples, and about the origin that would smear the tile.
+    let cornerUV = mat2x2f(1.0, 0.0, 0.5, 0.8660254) * corner.xy * grainTriangles;
+    let local = (uv - cornerUV) / coarser + cornerUV;
+    let read = textureSampleGrad(grains, rippleSampler, local + cornerOffset(corner.xy),
+                                 along / (frame.grain.x * coarser),
+                                 across / (frame.grain.x * coarser));
     sum += corner.z * (read - 0.5);
     weights += corner.z * corner.z;
   }
@@ -210,7 +217,11 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // likewise: where they are finer than the pixel, the normal averages
   // to flat, and shorter (the roughness they leave, Toksvig's measure,
   // for the lighting to come), so the tilt fades out of its own accord.
-  let grain = grainsAt(world.xz, footAlong, footAcross);
+  // The sand sorted by the ripples: the water carries the fine grains up
+  // the crests and leaves the coarse in the troughs, which are a little
+  // darker for it.
+  let sorted = mix(1.35, 0.8, tile.r);
+  let grain = grainsAt(world.xz, footAlong, footAcross, sorted);
   let tilt = grain.xyz;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));
@@ -232,7 +243,8 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
-  let sand = vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z);
+  let sand = vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z)
+    * mix(0.88, 1.0, tile.r);
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point
   // meets the surface, so that they drift down the sun's slant).

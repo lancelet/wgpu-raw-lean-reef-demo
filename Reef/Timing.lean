@@ -35,8 +35,10 @@ def Timing.size (passes : Nat) : UInt64 := (passes * 16).toUInt64
 def Timing.create (device : Device) (can : Bool) (passes : Nat) :
     IO (Option Timing) := do
   unless can do return none
+  -- Two stamps a pass, and two spare, for the ends of a span's passes
+  -- that are not wanted (a browser will not take an index left undefined).
   let set ← device.createQuerySet {
-    label := "timing", type := .timestamp, count := (2 * passes).toUInt32 }
+    label := "timing", type := .timestamp, count := (2 * passes + 2).toUInt32 }
   let size := Timing.size passes
   let some resolve ← device.createBuffer
       { label := "timing", size, usage := .queryResolve ||| .copySrc }
@@ -65,12 +67,14 @@ def Timing.writesFor (t : Option Timing) (i : Nat) :
 there is timing: for a span of several passes, the first's. -/
 def Timing.beginsFor (t : Option Timing) (i : Nat) :
     Option PassTimestampWrites := t.map fun t =>
-  { querySet := t.set, beginningOfPassWriteIndex := (2 * i).toUInt32 }
+  { querySet := t.set, beginningOfPassWriteIndex := (2 * i).toUInt32
+    endOfPassWriteIndex := (2 * t.passes).toUInt32 }
 
 /-- A stamp written at the end of a pass, for pass `i`'s span: the last's. -/
 def Timing.endsFor (t : Option Timing) (i : Nat) :
     Option PassTimestampWrites := t.map fun t =>
-  { querySet := t.set, endOfPassWriteIndex := (2 * i + 1).toUInt32 }
+  { querySet := t.set, beginningOfPassWriteIndex := (2 * t.passes + 1).toUInt32
+    endOfPassWriteIndex := (2 * i + 1).toUInt32 }
 
 /-- A 64-bit little-endian number at `i` in `bytes`. -/
 def readU64 (bytes : ByteArray) (i : Nat) : Nat := Id.run do

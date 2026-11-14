@@ -1,0 +1,4 @@
+# The shaders are cut on their marker lines and embedded as they are:
+# the same line ends on every platform.
+*.wgsl text eol=lf
+*.lean text eol=lf

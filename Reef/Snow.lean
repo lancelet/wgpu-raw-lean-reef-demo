@@ -45,9 +45,11 @@ def premultipliedBlend : BlendState := {
 /-- `source` with the part between the lines `// start` and `// stop`
 (and the markers) cut out. -/
 def cutBetween (source start stop : String) : String :=
-  match source.splitOn s!"// {start}\n" with
+  -- (The markers' lines matched without their ends: a checkout on
+  -- Windows may end them with a carriage return too.)
+  match source.splitOn s!"// {start}" with
   | [before, rest] =>
-    match rest.splitOn s!"// {stop}\n" with
+    match rest.splitOn s!"// {stop}" with
     | [_, after] => before ++ after
     | _ => before
   | _ => source

@@ -200,6 +200,32 @@ fn seaAt(xz : vec2f) -> vec3f {
     + vec3f(s.height, s.slope);
 }
 
+// The foam on the surface at `xz`, at `t`, 0 none to 1 white: where the
+// sea is steep enough to break, in the wind's measure (the wind sets
+// how much breaks at all, none under a breeze), a crest leaves a patch
+// of foam that the wind streaks and that fades over some seconds; so
+// the foam is the steepness, thresholded, smeared downwind by a drift
+// and broken up by a field of noise, in patches a metre or two across.
+fn foamAt(xz : vec2f, t : f32) -> f32 {
+  let wind = frame.caustic.w;
+  if (wind < 0.05) { return 0.0; }
+  let dir = frame.ripple.xy;
+  // The steepness a little upwind and a little ago: the foam trails the
+  // crest that made it.
+  let behind = xz - dir * 0.6;
+  let sea = seaAt(behind);
+  let steep = length(sea.yz);
+  let threshold = mix(0.5, 0.18, wind);
+  let breaking = smoothstep(threshold, threshold + 0.12, steep);
+  // Streaked and broken up: noise drifting with the wind, drawn out
+  // along it.
+  let along = vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x)));
+  let streaks = noise((along - vec2f(t * 0.4, 0.0)) / vec2f(1.6, 0.35) + 3.0);
+  let patches = noise((xz - dir * t * 0.3) / 1.2 + 11.0);
+  let texture = smoothstep(-0.2, 0.5, streaks * 0.6 + patches * 0.6);
+  return breaking * texture * smoothstep(0.05, 0.4, wind);
+}
+
 // The water, looking along `dir` (unit) into it with nothing in the
 // way: the horizon's colour level, brighter up toward the surface,
 // darker down.

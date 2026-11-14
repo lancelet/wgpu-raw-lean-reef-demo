@@ -242,9 +242,11 @@ structure Water where
   focus      : Float := 1
   dispersion : Float := 0.006
   /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,
-  in metres, repeating; the wind that makes its waves, in metres a second,
-  and its direction, in radians from the x axis; how high the waves are,
-  a factor; the shortest wave kept, in metres. -/
+  in metres, repeating; the wind that makes its waves, in metres a second
+  (a breeze of four by default; whitecaps from about seven), and its
+  direction, in radians from the x axis; how high the chop is at a wind
+  of four, a factor, growing with the wind's square; the shortest wave
+  kept, in metres. -/
   tile          : Float := 8
   wind          : Float := 4.0
   windDirection : Float := 0.5
@@ -285,9 +287,20 @@ structure Water where
   swellSpread   : Float := 0.25
   /-- The bubbles (`Reef/Bubbles.lean`): how many, and how far from the
   camera they are kept, in metres. -/
-  bubbles       : Nat   := 6000
+  bubbles       : Nat   := 5000
   bubbleReach   : Float := 12
   deriving Repr, Inhabited
+
+/-- How much rougher the sea is than at a breeze of four metres a second:
+the wind's square over that wind's. -/
+def Water.rougher (w : Water) : Float := (w.wind / 4) * (w.wind / 4)
+
+/-- The chop's amplitude at this wind. -/
+def Water.chopAmplitude (w : Water) : Float := w.amplitude * w.rougher
+
+/-- The swell's height at this wind: the design's, growing with the
+wind's square too (a wind sea, which the swell here is). -/
+def Water.swellAtWind (w : Water) : Float := w.swellHeight * w.rougher
 
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where

@@ -180,7 +180,7 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ [w.tile, w.loop, w.frames.toFloat, min 1 (w.wind / 8)]
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
     ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]
-    ++ [w.swellHeight, w.swellPeriod, w.swellSpread, 0]
+    ++ [w.swellAtWind, w.swellPeriod, w.swellSpread, 0]
     ++ (swellPeriodFractions.map fun f => waveNumber (w.swellPeriod * f) w.depth).toList
     ++ [0]).foldl
     pushF32 ByteArray.empty

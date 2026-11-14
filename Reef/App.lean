@@ -184,8 +184,10 @@ allowed, for the look). -/
 structure Sun where
   /-- Round from the x axis, in radians. -/
   azimuth   : Float := 0.36
-  /-- Up from the horizon, in radians. -/
-  elevation : Float := 0.72
+  /-- Up from the horizon, in radians: 55 degrees, a sun 40 degrees up
+  in the air; at the window's edge, 41, the light comes in grazing and
+  the surface's least slope throws it anywhere. -/
+  elevation : Float := 0.96
   deriving Repr, Inhabited
 
 /-- The direction the sun's light comes from: unit, up. -/
@@ -211,13 +213,22 @@ structure Water where
   /-- The sun's light at the floor, and the sky's from all above. -/
   sunlight   : Vec3  := ⟨1.05, 0.92, 0.70⟩
   skylight   : Vec3  := ⟨0.18, 0.30, 0.33⟩
-  /-- The caustics: a cell's width on the surface, in metres, and their
-  strength, 0 none to 1 as designed; and the speed of the waves that make
-  them, in metres a second (chop of half a metre to a metre runs at
-  about one). -/
-  caustic    : Float := 0.35
-  focus      : Float := 1
-  speed      : Float := 0.8
+  /-- The caustics' strength, 0 none to 1 as the surface makes them. -/
+  focus      : Float := 0.85
+  /-- The surface's waves (`shaders/caustics.wgsl`): one tile of them,
+  this wide, in metres, repeating; the dominant wavelength, in metres;
+  their steepness (amplitude times wave number, about a tenth for chop);
+  how far their directions spread about the waves', in radians. -/
+  tile       : Float := 8
+  wavelength : Float := 0.7
+  steepness  : Float := 0.07
+  spread     : Float := 0.8
+  /-- The caustics' texture, texels a side (a power of two); the grid of
+  the surface drawn into it, quads a side; and the margin beyond the tile
+  the grid covers, in metres, for what lands in the tile from beyond. -/
+  texels     : Nat   := 1024
+  grid       : Nat   := 768
+  margin     : Float := 0.8
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

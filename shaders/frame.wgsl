@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 368 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 400 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -18,13 +18,15 @@ struct Frame {
   up       : vec4f,  // the camera's up, and the tangent of half the view's height
   forward  : vec4f,  // the camera's forward; w unused
   screen   : vec4f,  // the target's width and height, in pixels; the time, in seconds; w unused
-  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' cell, in metres, their strength, and the waves' speed, in metres a second
+  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' strength; z, w unused
   extinct  : vec4f,  // how fast the water takes each colour, per metre; w unused
   horizon  : vec4f,  // the water's colour seen level, far off
   zenith   : vec4f,  // ... seen up, toward the surface
   deep     : vec4f,  // ... seen down, into the depths
   sunlight : vec4f,  // the sun's light at the floor
   skylight : vec4f,  // the sky's, from all above
+  waves    : vec4f,  // the surface's tile, in metres; the dominant wavelength; the steepness; the spread of directions, in radians
+  caustic  : vec4f,  // the caustics' texture, texels a side; the surface grid drawn into it, quads a side; the grid's margin beyond the tile, in metres; w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -36,6 +38,10 @@ struct Frame {
 @group(0) @binding(3) var rippleSampler : sampler;
 @group(0) @binding(4) var grains : texture_2d<f32>;
 @group(0) @binding(5) var horizons : texture_2d<f32>;
+// The caustics, drawn each frame (`shaders/caustics.wgsl`), over one
+// tile of the surface, laid out by where on the surface the sun's ray
+// through a point of the floor would pass were the surface flat.
+@group(0) @binding(6) var caustics : texture_2d<f32>;
 
 // The water, looking along `dir` (unit) into it with nothing in the
 // way: the horizon's colour level, brighter up toward the surface,
@@ -113,27 +119,4 @@ fn floorSlope(xz : vec2f, e : f32) -> vec2f {
   let dx = height(xz + vec2f(e, 0.0)) - height(xz - vec2f(e, 0.0));
   let dz = height(xz + vec2f(0.0, e)) - height(xz - vec2f(0.0, e));
   return vec2f(dx, dz) / (2.0 * e);
-}
-
-// The sun's light where it falls through the surface's waves, focused
-// here and spread there: the caustics at `p` on the surface (the world's
-// xz), about 1 on the mean, more on the bright webs, less between. Two
-// fields of noise drifting over each other, each bright along its zero
-// crossings, which are a web of lines a cell or so apart; the one
-// running with the waves at their speed (the chop that focuses the
-// light moves at its phase speed, about a metre a second), the other
-// slower and across it, so that the web reshapes once or twice a second
-// as the two cross. Blurred away where a cell is under a pixel's
-// footprint `foot`.
-fn caustics(p : vec2f, foot : f32) -> f32 {
-  let cell = frame.water.y;
-  let speed = frame.water.w;
-  let t = frame.screen.z;
-  let dir = frame.ripple.xy;
-  let across = vec2f(-dir.y, dir.x);
-  let a = noise((p - dir * speed * t) / cell);
-  let b = noise((p - (dir * 0.35 + across * 0.5) * speed * t) / (cell * 1.37) + 7.0);
-  let web = pow(1.0 - min(abs(a) * 1.6, 1.0), 5.0) + pow(1.0 - min(abs(b) * 1.6, 1.0), 5.0);
-  let sharp = 1.0 - smoothstep(cell * 0.3, cell * 1.5, foot);
-  return 1.0 + frame.water.z * sharp * (web * 1.6 - 0.45);
 }

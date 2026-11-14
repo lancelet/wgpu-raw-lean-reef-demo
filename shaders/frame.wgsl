@@ -58,6 +58,10 @@ const causticBrightest = 8.0;
 // (shaders/seabed.wgsl): the sky and the sun the framework leaves the
 // sand.
 @group(0) @binding(9) var seabed : texture_2d<f32>;
+// And the surge's flow about the framework (shaders/seabed.wgsl): how
+// far its potential and its streamlines are moved from the open floor's,
+// and how its potential's slope is changed.
+@group(0) @binding(10) var seabedFlow : texture_2d<f32>;
 const seaPoints = 256u;
 
 // The swell at `xz`, in the world, at time `t`: what is left of the
@@ -474,5 +478,16 @@ fn seabedAt(xz : vec2f) -> vec4f {
 // the reef's framework has made of it.
 fn height(xz : vec2f) -> f32 {
   return baseHeight(xz) + seabedAt(xz).z;
+}
+
+// The surge's flow about the framework at `xz` (shaders/seabed.wgsl):
+// what its potential and its stream function gain there (in metres,
+// along the surge and across it), and what its potential's gradient
+// gains (in the world's x and z); nothing outside its box.
+fn flowAt(xz : vec2f) -> vec4f {
+  let extent = (frame.reefDims.xz - 1.0) * frame.reef.w;
+  let uv = (xz - frame.reef.xz) / extent;
+  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return vec4f(0.0); }
+  return textureSampleLevel(seabedFlow, rippleSampler, uv, 0.0);
 }
 

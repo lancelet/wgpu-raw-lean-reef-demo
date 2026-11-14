@@ -21,6 +21,36 @@
 // the field every pixel, every frame.
 
 @group(1) @binding(0) var seabedOut : texture_storage_2d<rgba16float, write>;
+// The surge's flow about the framework, for the ripples: what its
+// potential and stream function gain, and its potential's gradient.
+@group(1) @binding(1) var flowOut : texture_storage_2d<rgba16float, write>;
+// The bommies as the surge sees them, circles on the floor: centre x, z,
+// radius, unused (`Reef.bommieCircles`).
+@group(1) @binding(2) var<storage, read> circles : array<vec4f>;
+
+// What the bommies add to the surge's complex potential at `xz`, the
+// open floor's being the position itself along the surge and across it:
+// each a doublet, the flow about a cylinder (w = z + a^2 / z), so that
+// the potential's lines, along which ripples lie, wrap round the rock,
+// and the streamlines with them. Inside a circle, where its doublet
+// would blow up, held at its rim's (the rock hides it). Each fades out
+// some radii away, so that the box's edge sees none.
+fn doublets(xz : vec2f) -> vec2f {
+  let dir = frame.ripple.xy;
+  let perp = vec2f(-dir.y, dir.x);
+  var gain = vec2f(0.0);
+  for (var i = 0u; i < arrayLength(&circles); i++) {
+    let c = circles[i];
+    let rel = xz - c.xy;
+    let z = vec2f(dot(rel, dir), dot(rel, perp));
+    let a2 = c.z * c.z;
+    let r2 = max(dot(z, z), a2);
+    let fade = 1.0 - smoothstep(3.0 * c.z, 6.0 * c.z, sqrt(r2));
+    // a^2 / z = a^2 conj(z) / |z|^2.
+    gain += vec2f(z.x, -z.y) * (a2 / r2) * fade;
+  }
+  return gain;
+}
 
 // How sheltered `p`, on the sand, is from the surge coming along
 // `along`: the rock upstream of it, nearer and more, the more.
@@ -54,10 +84,17 @@ fn bakeSeabed(@builtin(global_invocation_id) id : vec3u) {
   // The moat: the scour at the rock's foot, deepest against it, a couple
   // of hand-spans deep, the deeper where the flow is quick; the tails:
   // sand dropped in the lee, off the rock, a hand high.
-  let moat = -0.2 * exp(-near / 0.5) * (0.6 + 0.4 * quick);
-  let tail = 0.12 * lee * smoothstep(0.4, 1.4, near);
+  let moat = -0.32 * exp(-near / 0.75) * (0.6 + 0.4 * quick);
+  let tail = 0.16 * lee * smoothstep(0.5, 1.6, near);
   let bed = moat + tail;
   let moves = clamp((1.0 - 0.85 * lee) * (1.0 + 0.5 * quick), 0.0, 1.5);
   let shade = reefShade(vec3f(xz.x, open + bed, xz.y));
   textureStore(seabedOut, id.xy, vec4f(shade, bed, moves));
+  // The flow, for the ripples: its potential's gradient by differences
+  // (the stream function's is the same turned a right angle, the map
+  // being conformal), in the world's axes.
+  let e = 0.01;
+  let gx = (doublets(xz + vec2f(e, 0.0)).x - doublets(xz - vec2f(e, 0.0)).x) / (2.0 * e);
+  let gz = (doublets(xz + vec2f(0.0, e)).x - doublets(xz - vec2f(0.0, e)).x) / (2.0 * e);
+  textureStore(flowOut, id.xy, vec4f(doublets(xz), gx, gz));
 }

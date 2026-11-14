@@ -128,11 +128,19 @@ fn sdf(p : vec3f) -> f32 {
   // metre across, crowded (ridged noise, so they meet in creases).
   let knob = 1.0 - abs(noise3(p * 2.4 + 17.0));
   d -= 0.09 * knob * knob - 0.04;
+  // And smaller: the colonies' own lumps and ridges, a hand across.
+  let small = 1.0 - abs(noise3(p * 6.5 + 29.0));
+  d -= 0.035 * small * small - 0.015;
+  d += 0.02 * noise3(p * 11.0 + 3.0);
   // Ledges: the rock's layers, a little stepped.
   d += 0.035 * sin(p.y * 9.0 + fbm(p * 0.7) * 3.0);
   // Holes: the erosion's, and the borers': pockets a quarter metre across.
   let w = worley(p * 1.1 + 3.0);
   d = max(d, -(w - 0.24) / 1.1);
+  // And the borers' smaller holes, a few centimetres, in their crowds.
+  let bored = smoothstep(-0.1, 0.4, noise3(p * 0.9 + 51.0));
+  let w2 = worley(p * 3.2 + 8.0);
+  d = max(d, -(w2 - 0.2 * bored) / 3.2);
   return d;
 }
 
@@ -197,17 +205,20 @@ fn vertexPass(@builtin(global_invocation_id) id : vec3u) {
   }
   let ao = clamp(1.0 - occlusion * 0.35, 0.0, 1.0);
   // The sun's shadow: marched through the field toward it, softly.
-  var t = 0.08;
+  // (As shaders/bommie.wgsl's `rockShadow` marches it, which takes over
+  // between the vertices where it changes: the same, so the two meet.)
+  var t = 0.06;
   var lit = 1.0;
   for (var s = 0; s < 48; s++) {
-    let h = sdf(p + normal * 0.03 + bake.sun * t);
-    lit = min(lit, 6.0 * h / t);
-    t += clamp(h, 0.04 + 0.03 * t, 0.5);
-    if (lit < 0.01 || t > 9.0) { break; }
+    let h = sdf(p + normal * 0.04 + bake.sun * t);
+    lit = min(lit, 0.5 + 0.5 * h / (0.05 * t + 0.015));
+    t += clamp(h * 0.8, 0.03 + 0.03 * t, 0.5);
+    if (lit <= 0.0 || t > 8.0) { break; }
   }
+  lit = clamp(lit, 0.0, 1.0);
   let v = atomicAdd(&counts[0], 1u);
   if (v >= maxVertices) { cellIndex[linear] = none; return; }
-  vertices[v] = Vertex(p, ao, normal, clamp(lit, 0.0, 1.0));
+  vertices[v] = Vertex(p, ao, normal, lit * lit * (3.0 - 2.0 * lit));
   cellIndex[linear] = v;
 }
 

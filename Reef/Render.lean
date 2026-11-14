@@ -293,6 +293,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 8, visibility := .fragment ||| .compute,
         texture := { sampleType := .unfilterableFloat, viewDimension := .«3d» } },
       { binding := 9, visibility := .vertex ||| .fragment ||| .compute,
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 10, visibility := .vertex ||| .fragment ||| .compute,
         texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }
@@ -406,7 +408,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let caustics ← Caustics.bake device water
   let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
-  let frameEntries (seabedView : TextureView) : Array BindGroupEntry := #[
+  let frameEntries (seabedView flowView : TextureView) : Array BindGroupEntry := #[
       { binding := 0, buffer := some frame },
       { binding := 1, buffer := some mesh.nodes },
       { binding := 2, textureView := some tile.view },
@@ -416,16 +418,17 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 6, textureView := some caustics.view },
       { binding := 7, buffer := some caustics.field },
       { binding := 8, textureView := some bommies.fieldView },
-      { binding := 9, textureView := some seabedView }
+      { binding := 9, textureView := some seabedView },
+      { binding := 10, textureView := some flowView }
     ]
   let seabed ← Seabed.create device shared frameLayout
     (← device.createBindGroup {
       label := "frame for the seabed's bake", layout := frameLayout
-      entries := frameEntries (← placeholderView device) })
+      entries := frameEntries (← placeholderView device) (← placeholderView device) })
   let data ← device.createBindGroup {
     label   := "frame"
     layout  := frameLayout
-    entries := frameEntries seabed.view
+    entries := frameEntries seabed.view seabed.flowView
   }
   -- The reflection's: the same, but a mirrored frame and its own nodes.
   let mirrorFrame ← createBuffer device "reflection frame" .uniform
@@ -446,7 +449,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 6, textureView := some caustics.view },
       { binding := 7, buffer := some caustics.field },
       { binding := 8, textureView := some bommies.fieldView },
-      { binding := 9, textureView := some seabed.view }
+      { binding := 9, textureView := some seabed.view },
+      { binding := 10, textureView := some seabed.flowView }
     ]
   }
   return {

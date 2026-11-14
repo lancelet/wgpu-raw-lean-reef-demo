@@ -23,9 +23,28 @@ struct Out {
 
 // Where `xz`, in the world, is on the ripples' tile: along the waves, and
 // across them, in tiles (`shaders/ripples.wgsl`).
+// About the bommies, the surge's flow wraps round them, and the ripples,
+// which lie along its potential's lines, wrap with them: the tile is read
+// by the flow's potential and stream function, which the seabed's map
+// gives (shaders/seabed.wgsl).
 fn rippleUV(xz : vec2f) -> vec2f {
   let dir = frame.ripple.xy;
-  return vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x))) / frame.tiling.x;
+  return (vec2f(dot(xz, dir), dot(xz, vec2f(-dir.y, dir.x))) + flowAt(xz).xy)
+    / frame.tiling.x;
+}
+
+// The ripples' own axes at a point whose flow is `flow` (`flowAt`): the
+// gradients of the potential and of the stream function, in the world;
+// unit on the open floor, turned and scaled about the bommies.
+fn rippleAxes(flow : vec4f) -> mat2x2f {
+  let dir = frame.ripple.xy;
+  let along = dir + flow.zw;
+  return mat2x2f(along, vec2f(-along.y, along.x));
+}
+
+// A step `v` in the world as a step on the ripples' tile, by those axes.
+fn rippleStep(v : vec2f, axes : mat2x2f) -> vec2f {
+  return vec2f(dot(v, axes[0]), dot(v, axes[1])) / frame.tiling.x;
 }
 
 // What the ripples add to the floor's height at `xz`, in the world, for
@@ -60,7 +79,8 @@ fn floorAt(cellXZ : vec2f) -> vec3f {
   // lee.)
   let bed = seabedAt(world);
   let y = baseHeight(world) + bed.z
-    + rippleHeight(world, dist) * rippleFade(dist) * min(bed.w, 1.2);
+    + rippleHeight(world, dist) * rippleFade(dist)
+      * min(bed.w, 1.2) * (1.0 - 0.75 * smoothstep(0.05, 0.2, -bed.z));
   return vec3f(xz.x, y - frame.camera.y, xz.y);
 }
 
@@ -230,15 +250,17 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // that far off, where they are finer than a pixel, they average away):
   // in heights per wavelength along the waves and across, made metres
   // per metre, and turned to the world's axes.
+  let flow = flowAt(world.xz);
+  let axes = rippleAxes(flow);
   let tile = textureSampleGrad(ripples, rippleSampler, rippleUV(world.xz),
-                               rippleUV(footAlong), rippleUV(footAcross));
+                               rippleStep(footAlong, axes), rippleStep(footAcross, axes));
   // As freely as the sand moves here (the seabed's map): the ripples
   // die out where the rock shelters the sand.
   let bed = seabedAt(world.xz);
-  let rippled = min(bed.w, 1.2);
+  // (And in the moat, scoured to its coarse floor, hardly at all.)
+  let rippled = min(bed.w, 1.2) * (1.0 - 0.75 * smoothstep(0.05, 0.2, -bed.z));
   let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z * rippled;
-  let dir = frame.ripple.xy;
-  slope += along.x * dir + along.y * vec2f(-dir.y, dir.x);
+  slope += along.x * axes[0] + along.y * axes[1];
   // The grains' tilt, from their tile over the world's axes, filtered
   // likewise: where they are finer than the pixel, the normal averages
   // to flat, and shorter (the roughness they leave, Toksvig's measure,
@@ -246,7 +268,12 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // The sand sorted by the ripples: the water carries the fine grains up
   // the crests and leaves the coarse in the troughs, which are a little
   // darker for it.
-  let sorted = mix(1.35, 0.8, tile.r);
+  // And sorted by the rock: the moat at its foot, scoured, keeps only the
+  // coarse, and bits of the rock itself; the tails in its lee are the
+  // fine the slack water dropped.
+  let coarse = smoothstep(0.02, 0.12, -bed.z);
+  let fine = smoothstep(0.01, 0.05, bed.z);
+  let sorted = mix(1.35, 0.8, tile.r) * mix(1.0, 1.9, coarse) * mix(1.0, 0.8, fine);
   // What lives in the sand digs where the sand is still: in the ripples'
   // troughs, not on their crests, which the water sweeps; and in
   // colonies, patches a few ripples across with bare sand between (a
@@ -279,16 +306,21 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // Whether the sun is up over the ripples here: the horizon toward it,
   // from the four the tile holds, against its elevation; softly, as the
   // horizons, filtered, are a mean over what is under the pixel.
-  let sunAcross = vec2f(dot(sun.xz, dir), dot(sun.xz, vec2f(-dir.y, dir.x)));
+  let sunAcross = vec2f(dot(sun.xz, normalize(axes[0])), dot(sun.xz, normalize(axes[1])));
   let toward = max(vec4f(sunAcross.x, -sunAcross.x, sunAcross.y, -sunAcross.y),
                    vec4f(0.0));
   let rims = textureSampleGrad(horizons, rippleSampler, rippleUV(world.xz),
-                               rippleUV(footAlong), rippleUV(footAcross));
+                               rippleStep(footAlong, axes), rippleStep(footAcross, axes));
   let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963 * rippled;
   let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
-  let sand = vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z)
+  // The moat's coarse sand greyer and darker, flecked with the rock's
+  // own bits; the tails' fine sand paler.
+  // (Its rubble, bits of the rock, is the scatter's to place.)
+  let tint = mix(mix(vec3f(1.0), vec3f(0.86, 0.84, 0.8), coarse), vec3f(1.1, 1.08, 1.05), fine);
+  var sand = vec3f(0.66, 0.5, 0.26) * tint
+    * mix(1.0, 2.0 * grain.a, frame.grain.z * (1.0 + 1.2 * coarse))
     * mix(0.88, 1.0, tile.r);
   // Lit by the sky as much as it can see, and by the sun where it is up,
   // through the caustics (found where the sun's ray through this point

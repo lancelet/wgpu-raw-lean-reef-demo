@@ -27,8 +27,8 @@ namespace Reef
 /-- The box the reef's field covers: its corner, a cell's width, and the
 grid's points along x, y and z (`shaders/frame.wgsl` reads them too). -/
 def reefOrigin : Vec3 := ⟨-19.2, -3.0, -32⟩
-def reefCell : Float := 0.15
-def reefDims : Nat × Nat × Nat := (256, 48, 256)
+def reefCell : Float := 0.1
+def reefDims : Nat × Nat × Nat := (384, 72, 384)
 
 /-- The most vertices and indices the mesh may have
 (`shaders/reefbake.wgsl` has the same). -/
@@ -227,6 +227,12 @@ def Bommies.draw (b : Bommies) (pass : RenderPassEncoder) : IO Unit := do
   pass.setIndexBuffer b.indices .uint32 0 (reefMaxIndices * 4).toUInt64
   pass.drawIndexedIndirect b.args 0
 
+/-- The bommies as the surge sees them (`shaders/seabed.wgsl`): circles
+on the floor about their middles, a little inside their footprints:
+x, z, radius, unused. -/
+def bommieCircles : ByteArray :=
+  bommies.foldl (fun b m => [m.x, m.z, 0.5 * m.width, 0].foldl pushF32 b) ByteArray.empty
+
 /-- How many texels the seabed's map has along each side of the
 framework's box: a few centimetres each. -/
 def seabedSize : Nat := 1024
@@ -244,6 +250,9 @@ what bakes it. -/
 structure Seabed where
   texture  : Texture
   view     : TextureView
+  /-- The surge's flow about the bommies, for the ripples. -/
+  flow     : Texture
+  flowView : TextureView
   pipeline : ComputePipeline
   /-- The frame's bind group as the bake sees it (without the map), and
   the map's, writable. -/
@@ -260,11 +269,19 @@ def Seabed.create (device : Device) (shared : String)
     size := { width := seabedSize.toUInt32, height := seabedSize.toUInt32 }
     format := .rgba16Float }
   let view ← texture.createView none
+  let flow ← device.createTexture {
+    label := "seabed flow", usage := .storageBinding ||| .textureBinding
+    size := { width := seabedSize.toUInt32, height := seabedSize.toUInt32 }
+    format := .rgba16Float }
+  let flowView ← flow.createView none
+  let circles ← createBuffer device "bommie circles" .storage bommieCircles
+  let written (n : UInt32) : BindGroupLayoutEntry :=
+    { binding := n, visibility := .compute
+      storageTexture := { access := .writeOnly, format := .rgba16Float, viewDimension := .«2d» } }
   let layout ← device.createBindGroupLayout {
     label := "seabed"
-    entries := #[{ binding := 0, visibility := .compute
-                   storageTexture := { access := .writeOnly, format := .rgba16Float
-                                       viewDimension := .«2d» } }] }
+    entries := #[written 0, written 1,
+                 { binding := 2, visibility := .compute, buffer := { type := .readOnlyStorage } }] }
   let module ← createShader device "seabed" (shared ++ Shaders.seabed)
   let pipeline ← device.createComputePipeline {
     label := "seabed"
@@ -272,8 +289,11 @@ def Seabed.create (device : Device) (shared : String)
       label := "seabed", bindGroupLayouts := #[frameLayout, layout] })
     compute := { module, entryPoint := some "bakeSeabed" } }
   let data ← device.createBindGroup {
-    label := "seabed", layout, entries := #[{ binding := 0, textureView := some view }] }
-  return { texture, view, pipeline, frameData, data }
+    label := "seabed", layout
+    entries := #[{ binding := 0, textureView := some view },
+                 { binding := 1, textureView := some flowView },
+                 { binding := 2, buffer := some circles }] }
+  return { texture, view, flow, flowView, pipeline, frameData, data }
 
 /-- Bake the seabed's map, in `encoder`. -/
 def Seabed.bake (s : Seabed) (encoder : CommandEncoder) : IO Unit := do

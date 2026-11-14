@@ -37,62 +37,145 @@ struct Out {
 }
 
 // Noise over a surface of normal `n` at `p`, by its three planes, each
-// weighted by how square it faces them: about -1 to 1.
-fn triplanar(p : vec3f, n : vec3f) -> f32 {
-  var w = pow(abs(n), vec3f(4.0));
-  w = w / (w.x + w.y + w.z);
-  return 2.2 * (noise(p.yz) * w.x + noise(p.xz + 7.3) * w.y + noise(p.xy + 3.1) * w.z);
+// weighted by how square it faces them: about -1 to 1. A plane the
+// surface hardly faces is not read at all (most faces need one or two).
+fn triplanar(p : vec3f, w : vec3f) -> f32 {
+  var sum = 0.0;
+  if (w.x > 0.02) { sum += noise(p.yz) * w.x; }
+  if (w.y > 0.02) { sum += noise(p.xz + 7.3) * w.y; }
+  if (w.z > 0.02) { sum += noise(p.xy + 3.1) * w.z; }
+  return 2.2 * sum;
+}
+
+// The frame's gradient noise (`noise`) at `p`, with its gradient there:
+// value, d/dx, d/dy.
+fn noiseGrad(p : vec2f) -> vec3f {
+  let i = vec2i(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let du = 6.0 * f * (1.0 - f);
+  let ga = gradient(i);
+  let gb = gradient(i + vec2i(1, 0));
+  let gc = gradient(i + vec2i(0, 1));
+  let gd = gradient(i + vec2i(1, 1));
+  let va = dot(ga, f);
+  let vb = dot(gb, f - vec2f(1.0, 0.0));
+  let vc = dot(gc, f - vec2f(0.0, 1.0));
+  let vd = dot(gd, f - vec2f(1.0, 1.0));
+  let k = va - vb - vc + vd;
+  let value = va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k;
+  let d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd)
+    + du * vec2f(vb - va + u.y * k, vc - va + u.x * k);
+  return vec3f(value, d);
+}
+
+// `triplanar` with its gradient over the world, at `p` scaled `scale`
+// from the world: value, and d/dx, d/dy, d/dz. Exact, so a bump made of it
+// needs no differences between pixels (which, through the weights, would
+// crease along every triangle's edge).
+fn triplanarGrad(p : vec3f, scale : f32, w : vec3f) -> vec4f {
+  var sum = vec4f(0.0);
+  if (w.x > 0.02) { let g = noiseGrad(p.yz); sum += vec4f(g.x, 0.0, g.y, g.z) * w.x; }
+  if (w.y > 0.02) { let g = noiseGrad(p.xz + 7.3); sum += vec4f(g.x, g.y, 0.0, g.z) * w.y; }
+  if (w.z > 0.02) { let g = noiseGrad(p.xy + 3.1); sum += vec4f(g.x, g.y, g.z, 0.0) * w.z; }
+  return 2.2 * vec4f(sum.x, sum.yzw * scale);
+}
+
+// The sun's light at `p` on the rock, its normal `n`, marched through the
+// reef's field toward the sun (`reefDistance`): for where the shadow
+// baked at the vertices changes, which between vertices a hand apart
+// would draw its edge as their triangles'.
+fn rockShadow(p : vec3f, n : vec3f) -> f32 {
+  let sun = frame.sun.xyz;
+  var t = 0.06;
+  var lit = 1.0;
+  for (var s = 0; s < 24; s++) {
+    let h = reefDistance(p + n * 0.04 + sun * t, true);
+    lit = min(lit, 0.5 + 0.5 * h / (0.05 * t + 0.015));
+    t += clamp(h * 0.8, 0.03 + 0.03 * t, 0.5);
+    if (lit <= 0.0 || t > 8.0) { break; }
+  }
+  return smoothstep(0.0, 1.0, clamp(lit, 0.0, 1.0));
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
   let world = toWorld(in.relative);
   let dist = length(in.relative);
-  var n = normalize(in.normal);
-  // The fine roughness: the knobs of old coral heads, pits, the cups of
-  // dead polyps; a bump by the surface's own derivatives, fading where it
-  // would shimmer.
-  let near = 1.0 - smoothstep(5.0, 18.0, dist);
-  let knobs = 1.0 - abs(triplanar(world * 4.0, n));
-  let polyps = 1.0 - abs(triplanar(world * 19.0 + 5.0, n));
-  let grit = triplanar(world * 47.0 + 9.0, n);
-  let relief = knobs * knobs * 0.6 + polyps * 0.3 + grit * 0.1;
-  let h = (0.03 * knobs * knobs + 0.008 * polyps + 0.002 * grit) * near;
-  let dpx = dpdx(world);
-  let dpy = dpdy(world);
-  let r1 = cross(dpy, n);
-  let r2 = cross(n, dpx);
-  let det = dot(dpx, r1);
-  let grad = sign(det) * (dpdx(h) * r1 + dpdy(h) * r2);
-  n = normalize(abs(det) * n - grad);
+  let geometric = normalize(in.normal);
+  var n = geometric;
+  var w = pow(abs(geometric), vec3f(4.0));
+  w = w / (w.x + w.y + w.z);
+  // Five scales of noise over the rock, from a couple of metres to a
+  // couple of centimetres; the finest only near, where it shows.
+  let near = 1.0 - smoothstep(6.0, 22.0, dist);
+  let large = triplanar(world * 0.55 + 3.0, w);
+  let mid = triplanar(world * 1.7 + 11.0, w);
+  let smallG = triplanarGrad(world * 6.0 + 21.0, 6.0, w);
+  var detailG = vec4f(0.0);
+  var gritG = vec4f(0.0);
+  var microG = vec4f(0.0);
+  if (dist < 22.0) { detailG = triplanarGrad(world * 19.0 + 5.0, 19.0, w); }
+  if (dist < 8.0) { gritG = triplanarGrad(world * 47.0 + 9.0, 47.0, w); }
+  if (dist < 2.0) { microG = triplanarGrad(world * 140.0 + 2.0, 140.0, w); }
+  // (Each octave faded out before the distance it stops being read at,
+  // its gradient with it, so that no edge shows where it stops.)
+  gritG = gritG * (1.0 - smoothstep(5.0, 8.0, dist));
+  microG = microG * (1.0 - smoothstep(1.0, 2.0, dist));
+  detailG = detailG * (1.0 - smoothstep(16.0, 22.0, dist));
+  let small = smallG.x;
+  let detail = detailG.x;
+  let grit = gritG.x;
+  let micro = microG.x;
+  // The fine roughness: the knobs of old coral heads, the cups of dead
+  // polyps, grit, and, a hand away, the rock's own grain; a bump of their
+  // exact gradients, fading where it would shimmer.
+  let knobs = 1.0 - abs(small);
+  let cupT = clamp((detail - 0.3) / 0.4, 0.0, 1.0);
+  let cups = cupT * cupT * (3.0 - 2.0 * cupT);
+  let relief = knobs * knobs * 0.5 + (1.0 - abs(detail)) * 0.25 + grit * 0.1 - cups * 0.3;
+  let slope = (0.07 * knobs * (-sign(small)) * smallG.yzw
+             - 0.008 * sign(detail) * detailG.yzw
+             - 0.004 * 6.0 * cupT * (1.0 - cupT) / 0.4 * detailG.yzw
+             + 0.002 * gritG.yzw + 0.0006 * microG.yzw) * near;
+  n = normalize(n - (slope - n * dot(n, slope)));
   // The material. Under it all, old limestone, pale and a little warm;
-  // over it, in patches a hand to a metre across:
+  // over it, in patches a hand to a metre across, their edges ragged:
   // coralline algae's crusts, pink to mauve, where the light is good;
   // algal turf, olive and brown, the commonest cover of a reef's rock;
   // bleached patches of dead coral, newly bare;
   // dark sponge and sea squirts in the shade;
-  // sand dusted on what is flat enough to hold it;
+  // sand on what is flat enough to hold it;
   // and the hollows darker.
-  let up = clamp(n.y, -1.0, 1.0);
-  let large = triplanar(world * 0.55 + 3.0, n);
-  let mid = triplanar(world * 1.7 + 11.0, n);
-  let small = triplanar(world * 6.0 + 21.0, n);
-  var albedo = vec3f(0.58, 0.55, 0.48) * (0.9 + 0.15 * small);
-  let turf = smoothstep(-0.25, 0.25, large + 0.4 * mid);
-  albedo = mix(albedo, mix(vec3f(0.33, 0.33, 0.16), vec3f(0.4, 0.31, 0.2), smoothstep(-0.5, 0.5, mid)),
-               turf * 0.85);
-  let coralline = smoothstep(0.1, 0.45, mid - 0.5 * large + 0.3 * small)
-    * smoothstep(-0.4, 0.3, up);
-  albedo = mix(albedo, mix(vec3f(0.7, 0.42, 0.52), vec3f(0.55, 0.38, 0.58), smoothstep(-0.4, 0.4, small)),
-               coralline * 0.85);
-  let bare = smoothstep(0.55, 0.75, small + 0.4 * mid) * (1.0 - coralline);
-  albedo = mix(albedo, vec3f(0.78, 0.76, 0.7), bare * 0.7);
-  let sponge = smoothstep(0.5, 0.8, -mid - 0.3 * small) * (1.0 - smoothstep(0.6, 0.95, in.shadow));
-  albedo = mix(albedo, vec3f(0.42, 0.18, 0.12), sponge * 0.8);
-  let dust = smoothstep(0.7, 0.9, up) * smoothstep(-0.3, 0.3, triplanar(world * 1.3, n) + 0.2);
-  albedo = mix(albedo, vec3f(0.66, 0.5, 0.26) * (0.9 + 0.2 * small), dust * 0.85);
-  // Its hollows: the bake's, and the relief's own, close up.
-  let crevice = mix(0.5, 1.0, in.ao) * mix(1.0, 0.55 + 0.6 * relief, near * (1.0 - dust));
-  albedo = albedo * crevice;
+  let up = clamp(geometric.y, -1.0, 1.0);
+  let ragged = 0.35 * small + 0.25 * detail;
+  var albedo = vec3f(0.58, 0.55, 0.48) * (0.88 + 0.12 * small + 0.08 * detail);
+  let turf = smoothstep(-0.35, 0.35, large + 0.4 * mid + ragged);
+  albedo = mix(albedo, mix(vec3f(0.33, 0.33, 0.16), vec3f(0.4, 0.31, 0.2), smoothstep(-0.6, 0.6, mid + detail * 0.3)),
+               turf * 0.8);
+  let coralline = smoothstep(0.0, 0.6, mid - 0.5 * large + ragged) * smoothstep(-0.4, 0.3, up);
+  albedo = mix(albedo, mix(vec3f(0.68, 0.43, 0.52), vec3f(0.55, 0.39, 0.56), smoothstep(-0.5, 0.5, small)),
+               coralline * 0.75);
+  let bare = smoothstep(0.45, 0.85, small + 0.4 * mid + 0.3 * detail) * (1.0 - coralline);
+  albedo = mix(albedo, vec3f(0.76, 0.74, 0.68), bare * 0.6);
+  let sponge = smoothstep(0.4, 0.9, -mid - 0.3 * small + 0.2 * detail) * (1.0 - smoothstep(0.6, 0.95, in.shadow));
+  albedo = mix(albedo, vec3f(0.42, 0.18, 0.12), sponge * 0.7);
+  // Sand, where it is flat enough to lie: the floor's own grains, read
+  // from above as the floor's are (only on what faces up), speckled.
+  let dust = smoothstep(0.75, 0.92, up) * smoothstep(-0.4, 0.2, large + 0.3 * small + 0.2);
+  if (dust > 0.0) {
+    let grain = textureSampleLevel(grains, rippleSampler, world.xz / frame.grain.x, 0,
+                                   log2(max(1.0, dist * frame.camera.w * 512.0 / frame.grain.x)));
+    albedo = mix(albedo, vec3f(0.66, 0.5, 0.26) * mix(1.0, 2.0 * grain.a, frame.grain.z), dust * 0.9);
+  }
+  // Mottled at a hand's scale and finer: the crusts and films of what
+  // grows on the rock, never one even colour; darker in its hollows, the
+  // bake's, and the relief's own, close up.
+  // Close up, crunchy: grit, pale and dark, a couple of centimetres, and
+  // the polyps' cups dark.
+  let crunch = (0.78 + 0.32 * detail) * (0.8 + 0.4 * smoothstep(-0.5, 0.5, grit))
+    * (1.0 - 0.35 * cups) * (0.85 + 0.3 * smoothstep(-0.4, 0.4, micro));
+  albedo = albedo * mix(1.0, crunch, (1.0 - dust) * near);
+  albedo = albedo * mix(0.45, 1.0, in.ao) * mix(1.0, 0.55 + 0.6 * relief, near * (1.0 - dust));
   // The light: the sky's, as much as the rock lets in; the sun's through
   // the caustics where the sun's ray through here meets the surface, the
   // swell's slosh and bending, the clouds and the floating litter, taken
@@ -116,7 +199,12 @@ fn triplanar(p : vec3f, n : vec3f) -> f32 {
   // (The sun's light is the floor's: above it, less water has taken it.)
   let down = exp(frame.extinct.rgb * max(world.y, 0.0) / max(sun.y, 0.1));
   let floating = debrisAt(onSurface, swellDriftAt(onSurface, t), t, 0.004 + toSurface * 0.0093).x;
-  let shade = cloudShade(world, t) * (1.0 - 0.85 * floating) * in.shadow;
+  // (Marched where the vertices' shadow changes, and blended into theirs
+  // toward where it does not, so that there is no edge where it starts.)
+  var shadow = in.shadow;
+  let changing = smoothstep(0.0, 0.08, min(shadow, 1.0 - shadow)) * (1.0 - smoothstep(12.0, 15.0, dist));
+  if (changing > 0.0) { shadow = mix(shadow, rockShadow(world, geometric), changing); }
+  let shade = cloudShade(world, t) * (1.0 - 0.85 * floating) * shadow;
   let diffuse = max(dot(n, sun), 0.0);
   let sky = frame.skylight.rgb * in.ao * (0.55 + 0.45 * up);
   let light = sky + frame.sunlight.rgb * diffuse * focus * down * shade;

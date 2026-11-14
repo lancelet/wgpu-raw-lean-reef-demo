@@ -26,7 +26,7 @@ namespace Reef
 def bakeBytes (r : Ripples) : ByteArray :=
   [r.perTile.toFloat, r.spread, r.disorder, r.sharpness,
    r.steepness, r.texels.toFloat, r.asymmetry, r.fine,
-   r.pits, r.pitDepth, 0, 0].foldl pushF32 ByteArray.empty
+   r.pits, r.pitDepth, r.repose.tan, r.slipFaces].foldl pushF32 ByteArray.empty
 
 /-- The tiles of `r`, baked: the ripples', and their horizons'. -/
 def Ripples.bake (device : Device) (r : Ripples) : IO (Tile × Tile) := do

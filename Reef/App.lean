@@ -123,6 +123,11 @@ structure Ripples where
   height. -/
   pits       : Float := 0.35
   pitDepth   : Float := 0.4
+  /-- The slip faces: sand carried over a crest comes to rest at its
+  angle of repose, a straight face down the lee, in radians (30 degrees
+  under water); and how much of the field has them, 0 none to 1 all. -/
+  repose     : Float := 0.52
+  slipFaces  : Float := 0.7
   /-- The tile's texels a side: a power of two. -/
   texels     : Nat   := 2048
   /-- Ripples across the tile: even. -/

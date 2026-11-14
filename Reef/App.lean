@@ -219,9 +219,10 @@ structure Water where
   skylight   : Vec3  := ⟨0.08, 0.17, 0.3⟩
   /-- The caustics' strength, 0 none to 1 as the surface makes them; and
   their fringes of colour, how far the water's index for red and for blue
-  lie either side of green's: 0.004 in truth, 0 no fringes. -/
+  lie either side of green's: 0.006 in truth (1.331 at 656 nm, 1.343 at
+  486 nm, about 1.333 at 550), 0 no fringes. -/
   focus      : Float := 1
-  dispersion : Float := 0.001
+  dispersion : Float := 0.006
   /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,
   in metres, repeating; the wind that makes its waves, in metres a second,
   and its direction, in radians from the x axis; how high the waves are,

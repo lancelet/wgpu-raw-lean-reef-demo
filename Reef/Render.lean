@@ -11,8 +11,8 @@ import Reef.Timing
 
 Before the frame's pass, the sea's surface for the moment, evolved in
 compute (`Reef/Caustics.lean`), for the surface drawn from below
-(`shaders/surface.wgsl`) over the sand. One render pass, with a depth
-buffer, timed as a whole (on Metal a
+(`shaders/surface.wgsl`) over the sand. Three render passes, timed as
+a whole from the first's beginning to the last's end (on Metal a
 pass's own stamps overlap the next's, so passes cannot be told apart;
 what a thing costs is the difference with it off): the water behind,
 then the sand, the floor's quadtree
@@ -20,8 +20,9 @@ then the sand, the floor's quadtree
 this frame, drawn at once, its ripples and its grains from their tiles
 (`Reef/Ripples.lean`, `Reef/Grains.lean`); over it, if shown, its wireframe
 (`shaders/wire.wgsl`), and the grid (`shaders/grid.wgsl`), each blended
-over; then the overlay's text over all (`Reef/Overlay.lean`). The
-background is the colour the floor fades into.
+over; then the overlay's text over all (`Reef/Overlay.lean`). Between
+the scene and the overlays, the light in the water (`shaders/shafts.wgsl`),
+a pass of its own that reads the scene's depth and adds to its colour.
 
 Everything is drawn relative to the camera, which the view matrix puts at
 the origin: far from the world's origin, the floats the GPU works in would
@@ -56,6 +57,9 @@ namespace Reef
 /-- The depth buffer's format. -/
 def depthFormat : TextureFormat := .depth24Plus
 
+/-- The light in the water's format: floats, for light added up. -/
+def shaftFormat : TextureFormat := .rgba16Float
+
 /-- The depth buffer, and the size it is for. -/
 structure Depth where
   texture : Texture
@@ -72,6 +76,17 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
+  shafts   : RenderPipeline
+  /-- The shafts' second bind group, the scene's depth: made with the
+  depth buffer; their target, half the scene's size, made with it too;
+  and the pass adding it over the scene, with its bind group. -/
+  shaftLayout : BindGroupLayout
+  shaftData   : IO.Ref (Option BindGroup)
+  shaftTarget : IO.Ref (Option TextureView)
+  shaftBlend  : RenderPipeline
+  shaftBlendLayout : BindGroupLayout
+  shaftBlendData   : IO.Ref (Option BindGroup)
+  shaftSampler     : Sampler
   /-- The surface's grid, indexed, and how many indices. -/
   surfaceIndices : Buffer
   surfaceCount   : UInt32
@@ -120,7 +135,8 @@ tile's width, the relief, the speckle), the sun's direction, the camera's
 basis (with the tangents of half the view's width and height), the
 screen (its size, the time), and the water (the surface's height, the
 caustics' strength; the extinction; the colours; the caustics' loop; the
-surface's grid and reach): 400 bytes.
+surface's grid and reach, with the clip planes; the light in the water):
+416 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
@@ -149,7 +165,8 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
     ++ v w.sunlight 1 ++ v w.skylight 1
     ++ [w.tile, w.loop, w.frames.toFloat, 0]
-    ++ [w.surfaceGrid.toFloat, w.surfaceReach, 0, 0]).foldl
+    ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
+    ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.texels.toFloat]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -244,6 +261,48 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
   let surface ← pipeline device "surface" layout surfaceModule format
+  -- The shafts: the frame's bind group, and the scene's depth in a second.
+  let shaftLayout ← device.createBindGroupLayout {
+    label   := "shafts"
+    entries := #[{ binding := 0, visibility := .fragment,
+                   texture := { sampleType := .depth, viewDimension := .«2d» } }]
+  }
+  let shaftPipelineLayout ← device.createPipelineLayout {
+    label := "shafts", bindGroupLayouts := #[frameLayout, shaftLayout] }
+  let shaftModule ← createShader device "shafts" (shared ++ Shaders.shafts)
+  let shafts ← device.createRenderPipeline {
+    label    := "shafts"
+    layout   := some shaftPipelineLayout
+    vertex   := { module := shaftModule, entryPoint := some "vs" }
+    fragment := some {
+      module     := shaftModule
+      entryPoint := some "fs"
+      targets    := #[{ format := shaftFormat }]
+    }
+  }
+  let shaftBlendLayout ← device.createBindGroupLayout {
+    label   := "shaft blend"
+    entries := #[
+      { binding := 0, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2d» } },
+      { binding := 1, visibility := .fragment, sampler := { type := .filtering } }]
+  }
+  let shaftBlendPipelineLayout ← device.createPipelineLayout {
+    label := "shaft blend", bindGroupLayouts := #[frameLayout, shaftBlendLayout] }
+  let shaftBlendModule ← createShader device "shaft blend" (shared ++ Shaders.shaftblend)
+  let shaftBlend ← device.createRenderPipeline {
+    label    := "shaft blend"
+    layout   := some shaftBlendPipelineLayout
+    vertex   := { module := shaftBlendModule, entryPoint := some "vs" }
+    fragment := some {
+      module     := shaftBlendModule
+      entryPoint := some "fs"
+      targets    := #[{ format := format, blend := some addBlend }]
+    }
+  }
+  let shaftSampler ← device.createSampler (some {
+    label := "shafts", addressModeU := .clampToEdge, addressModeV := .clampToEdge,
+    magFilter := .linear, minFilter := .linear })
   let surfaceLattice := latticeIndices water.surfaceGrid
   let surfaceIndices ← createBuffer device "surface grid" .index
     (surfaceLattice.foldl pushU32 ByteArray.empty)
@@ -277,8 +336,12 @@ def Renderer.create (device : Device) (format : TextureFormat)
     ]
   }
   return {
-    device, format, backdrop, surface, surfaceIndices, sand, sandWire, grid, frame,
-    data, horizons, caustics
+    device, format, backdrop, surface, surfaceIndices, shafts, shaftLayout, sand,
+    sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
+    shaftSampler
+    shaftData      := ← IO.mkRef none
+    shaftTarget    := ← IO.mkRef none
+    shaftBlendData := ← IO.mkRef none
     surfaceCount := surfaceLattice.size.toUInt32
     ripples := tile
     grains  := grainTile
@@ -305,12 +368,33 @@ def Renderer.depthFor (r : Renderer) (width height : UInt32) : IO Depth := do
     if d.width == width && d.height == height then return d
   let texture ← r.device.createTexture {
     label  := "depth"
-    usage  := .renderAttachment
+    usage  := .renderAttachment ||| .textureBinding
     size   := { width, height }
     format := depthFormat
   }
   let d : Depth := { texture, view := ← texture.createView none, width, height }
   r.depth.set (some d)
+  -- The shafts read it: their bind group made for it; and their target,
+  -- half its size, with the bind group that reads that.
+  r.shaftData.set (some (← r.device.createBindGroup {
+    label   := "shafts"
+    layout  := r.shaftLayout
+    entries := #[{ binding := 0, textureView := some d.view }]
+  }))
+  let half ← r.device.createTexture {
+    label  := "shafts"
+    usage  := .renderAttachment ||| .textureBinding
+    size   := { width := max 1 (width / 2), height := max 1 (height / 2) }
+    format := shaftFormat
+  }
+  let halfView ← half.createView none
+  r.shaftTarget.set (some halfView)
+  r.shaftBlendData.set (some (← r.device.createBindGroup {
+    label   := "shaft blend"
+    layout  := r.shaftBlendLayout
+    entries := #[{ binding := 0, textureView := some halfView },
+                 { binding := 1, sampler := some r.shaftSampler }]
+  }))
   return d
 
 /-- Draw the floor's `count` nodes, the patch once each: indexed, or, for
@@ -359,6 +443,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   -- caustics' loop is at.
   let loop := app.water.loop
   r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
+  -- The scene: the water behind, the sand, the surface; its depth kept.
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{
       view       := some view
@@ -369,10 +454,10 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     depthStencilAttachment := some {
       view            := depth.view
       depthLoadOp     := .clear
-      depthStoreOp    := .discard
+      depthStoreOp    := .store
       depthClearValue := some 1
     }
-    timestampWrites := Timing.writesFor r.timing 0
+    timestampWrites := Timing.beginsFor r.timing 0
   }
   pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.backdrop
@@ -382,6 +467,38 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.setPipeline r.surface
   pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)
   pass.drawIndexed r.surfaceCount 1 0 0 0
+  pass.«end»
+  -- The light in the water, at half size, reading the scene's depth;
+  -- then added over the scene, smoothed.
+  if let (some data, some target, some blendData) :=
+      (← r.shaftData.get, ← r.shaftTarget.get, ← r.shaftBlendData.get) then
+    let pass ← encoder.beginRenderPass {
+      colorAttachments := #[{ view := some target, loadOp := .clear, storeOp := .store }]
+    }
+    pass.setBindGroup 0 (some r.data) #[]
+    pass.setBindGroup 1 (some data) #[]
+    pass.setPipeline r.shafts
+    pass.draw 3 1 0 0
+    pass.«end»
+    let pass ← encoder.beginRenderPass {
+      colorAttachments := #[{ view := some view, loadOp := .load, storeOp := .store }]
+    }
+    pass.setBindGroup 0 (some r.data) #[]
+    pass.setBindGroup 1 (some blendData) #[]
+    pass.setPipeline r.shaftBlend
+    pass.draw 3 1 0 0
+    pass.«end»
+  -- The overlays, over it all, against the scene's depth.
+  let pass ← encoder.beginRenderPass {
+    colorAttachments := #[{ view := some view, loadOp := .load, storeOp := .store }]
+    depthStencilAttachment := some {
+      view            := depth.view
+      depthLoadOp     := .load
+      depthStoreOp    := .discard
+    }
+    timestampWrites := Timing.endsFor r.timing 0
+  }
+  pass.setBindGroup 0 (some r.data) #[]
   if app.overlays.wireframe then
     pass.setPipeline r.sandWire
     r.drawFloor pass count (wire := true)

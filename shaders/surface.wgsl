@@ -57,8 +57,8 @@ fn sky(dir : vec3f) -> vec3f {
   let base = mix(vec3f(0.85, 0.92, 1.0), vec3f(0.25, 0.45, 0.9), pow(up, 0.6));
   let sunAir = sunInAir();
   let toSun = max(dot(dir, -sunAir), 0.0);
-  let disc = pow(toSun, 2000.0) * 40.0;
-  let glow = pow(toSun, 12.0) * 1.5;
+  let disc = pow(toSun, 600.0) * 30.0;
+  let glow = pow(toSun, 24.0) * 0.9;
   return base + vec3f(1.0, 0.95, 0.85) * (disc + glow);
 }
 
@@ -99,10 +99,24 @@ fn sunInAir() -> vec3f {
     let inAir = refract(toSurface, -n, waterIndex);
     through = sky(inAir) * (1.0 - reflectance);
   }
-  // Reflected: the water below, as the water's own colour has it, with a
-  // little of the floor's light.
+  // Reflected: the floor, as it is lit, seen through the water the
+  // mirrored ray crosses to reach it, where the ray goes down; the
+  // water's own colour where it does not. Over bright sand in shallow
+  // water the ceiling is a bright mirror near the window, and the
+  // water's blue far off, where the ray grazes.
   let mirrored = reflect(toSurface, n);
-  let below = water(mirrored) * 1.3 + frame.skylight.rgb * 0.15;
+  // The sand's light has come down through the water, and goes up
+  // through it again to the surface: the water's colour twice over, and
+  // the sun's warmth mostly gone from it.
+  let sandLit = vec3f(0.66, 0.5, 0.26) * 0.6
+    * (frame.skylight.rgb + frame.sunlight.rgb * max(frame.sun.y, 0.0) * 0.5);
+  let floorBelow = frame.water.x;  // the surface's height over the floor's zero
+  let toFloor = select(1e9, floorBelow / max(-mirrored.y, 1e-4), mirrored.y < -1e-4);
+  // Mostly the water's own colour, a little of the floor: at a few metres
+  // over sand the underside is a dark blue mirror with the floor faint
+  // in it, brighter the steeper the ray goes down.
+  let floorSeen = select(vec3f(0.0), fogged(sandLit, mirrored * toFloor * 2.5), toFloor < 1e8);
+  let below = water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0);
   let colour = through + below * reflectance;
   return vec4f(fogged(colour, in.relative), 1.0);
 }

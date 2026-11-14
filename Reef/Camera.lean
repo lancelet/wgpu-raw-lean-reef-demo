@@ -70,9 +70,9 @@ def fly (c : Camera) (v : Vec3) : Camera :=
                                   + v.z * c.forward }
 
 /-- Where it starts: a diver's height over the sand, looking a few degrees
-down at a point some metres out. -/
+down; orbiting about a point half a metre ahead, as a diver turns. -/
 def initial : Camera :=
-  { position := ⟨0, 1.2, 8⟩, yaw := 0, pitch := -0.105, distance := 8 }
+  { position := ⟨0, 1.2, 8⟩, yaw := 0, pitch := -0.105, distance := 0.5 }
 
 end Camera
 

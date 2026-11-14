@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 400 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 416 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -26,7 +26,8 @@ struct Frame {
   sunlight : vec4f,  // the sun's light at the floor
   skylight : vec4f,  // the sky's, from all above
   caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; w unused
-  surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; z, w unused
+  surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
+  shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; the caustics' texels a side
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;

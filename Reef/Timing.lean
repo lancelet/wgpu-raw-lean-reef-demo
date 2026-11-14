@@ -61,6 +61,17 @@ def Timing.writes (t : Timing) (i : Nat) : PassTimestampWrites := {
 def Timing.writesFor (t : Option Timing) (i : Nat) :
     Option PassTimestampWrites := t.map (·.writes i)
 
+/-- A stamp written at the beginning of a pass, for pass `i`'s span, if
+there is timing: for a span of several passes, the first's. -/
+def Timing.beginsFor (t : Option Timing) (i : Nat) :
+    Option PassTimestampWrites := t.map fun t =>
+  { querySet := t.set, beginningOfPassWriteIndex := (2 * i).toUInt32 }
+
+/-- A stamp written at the end of a pass, for pass `i`'s span: the last's. -/
+def Timing.endsFor (t : Option Timing) (i : Nat) :
+    Option PassTimestampWrites := t.map fun t =>
+  { querySet := t.set, endOfPassWriteIndex := (2 * i + 1).toUInt32 }
+
 /-- A 64-bit little-endian number at `i` in `bytes`. -/
 def readU64 (bytes : ByteArray) (i : Nat) : Nat := Id.run do
   let mut n := 0

@@ -73,7 +73,7 @@ fn placed(i : u32) -> Mote {
   m.position = vec3f(xz.x, mix(lowest, highest, rand(seed, 2u)), xz.y);
   let spread = exp((rand(seed, 3u) + rand(seed, 7u) - 1.0) * 2.2);
   let flake = select(1.0, 4.0, rand(seed, 8u) < 0.02);
-  m.radius = 0.0005 * scale * spread * flake;
+  m.radius = 0.00058 * scale * spread * flake;
   m.phase = rand(seed, 4u) * 6.2832;
   m.shell = shell;
   m.tint = rand(seed, 5u);
@@ -146,11 +146,11 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let view = relative / dist;
   // Out of focus close to the camera: a soft disc up to a few
   // millimetres wide, faint (the film's motes are never lens dust).
-  let blur = smoothstep(0.5, 0.08, dist) * 0.0012;
+  let blur = smoothstep(0.6, 0.08, dist) * 0.002;
   let size = m.radius + blur;
   // Never under a few pixels, a soft glow rather than a speck; fainter by
   // as much as it is drawn bigger than it is.
-  let least = dist * frame.camera.w * 4.0;
+  let least = dist * frame.camera.w * 4.5;
   let drawn = max(size, least);
   let coverage = (m.radius * m.radius) / (drawn * drawn);
   let world = relative + (frame.right.xyz * corner.x + frame.up.xyz * corner.y) * drawn;

@@ -17,22 +17,27 @@
 // at each point of a grid over the tile, read between the points.
 
 const N = 256u;
-// The water's refractive index for green, and how far red's and blue's
-// lie either side of it: a quarter of the truth, which at the floor's
-// depth would fringe every line wider than the line.
+// The water's refractive index for green; how far red's and blue's lie
+// either side of it is the bake's `dispersion`.
 const index = 1.333;
-const dispersion = 0.001;
 // The light at a fold, which the maths has unbounded; the texture holds
 // the light over this, 0 to 1.
 const brightest = 8.0;
 
 struct Bake {
   // The tile's width, in metres; the surface's height above the floor;
-  // the grid drawn, quads a side; its margin beyond the tile, in metres.
-  tile   : f32,
-  depth  : f32,
-  grid   : u32,
-  margin : f32,
+  // the grid drawn, quads a side; its margin beyond the tile, in metres;
+  // how far the water's index for red and for blue lie either side of
+  // green's (0.004 in truth, which at the floor's depth would fringe
+  // every line wider than the line).
+  tile       : f32,
+  depth      : f32,
+  grid       : u32,
+  margin     : f32,
+  dispersion : f32,
+  pad0       : f32,
+  pad1       : f32,
+  pad2       : f32,
 }
 
 @group(0) @binding(0) var<uniform> bake : Bake;
@@ -80,7 +85,7 @@ fn landing(p : vec2f, eta : f32) -> vec2f {
   let span = bake.tile + 2.0 * bake.margin;
   let step = span / f32(grid);
   let p = vec2f(f32(cx), f32(cz)) * step - bake.margin;
-  let eta = 1.0 / (index + dispersion * (f32(instance) - 1.0));
+  let eta = 1.0 / (index + bake.dispersion * (f32(instance) - 1.0));
   let here = landing(p, eta);
   // How much floor a patch of surface about `p` lands on: the landing's
   // Jacobian, by differences a third of a step on; the light is the

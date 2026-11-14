@@ -214,8 +214,11 @@ structure Water where
   dim and blue. -/
   sunlight   : Vec3  := ⟨1.65, 1.3, 0.9⟩
   skylight   : Vec3  := ⟨0.07, 0.13, 0.17⟩
-  /-- The caustics' strength, 0 none to 1 as the surface makes them. -/
+  /-- The caustics' strength, 0 none to 1 as the surface makes them; and
+  their fringes of colour, how far the water's index for red and for blue
+  lie either side of green's: 0.004 in truth, 0 no fringes. -/
   focus      : Float := 1
+  dispersion : Float := 0.001
   /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,
   in metres, repeating; the wind that makes its waves, in metres a second,
   and its direction, in radians from the x axis; how high the waves are,

@@ -286,8 +286,10 @@ structure Water where
   swellPeriod   : Float := 3.5
   swellSpread   : Float := 0.25
   /-- The bubbles (`Reef/Bubbles.lean`): how many, and how far from the
-  camera they are kept, in metres. -/
-  bubbles       : Nat   := 5000
+  camera they are kept, in metres. None, for now: under a breeze nothing
+  breaks to make them, and the lagoon's own sources (the crest's haze,
+  the algae's beads) are not made yet. -/
+  bubbles       : Nat   := 0
   bubbleReach   : Float := 12
   deriving Repr, Inhabited
 

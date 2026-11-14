@@ -1,6 +1,7 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
+import Reef.Grains
 import Reef.Ripples
 
 /-!
@@ -8,8 +9,8 @@ import Reef.Ripples
 
 One render pass, with a depth buffer: the sand, the floor's quadtree
 (`Reef/Floor.lean`, `shaders/sand.wgsl`), the nodes chosen for the eye
-this frame, drawn at once, its ripples from their tile
-(`Reef/Ripples.lean`); over it, if shown, its wireframe
+this frame, drawn at once, its ripples and its grains from their tiles
+(`Reef/Ripples.lean`, `Reef/Grains.lean`); over it, if shown, its wireframe
 (`shaders/wire.wgsl`), and the grid (`shaders/grid.wgsl`), each blended
 over; then the overlay's text over all (`Reef/Overlay.lean`). The
 background is the colour the floor fades into.
@@ -58,10 +59,11 @@ structure Renderer where
   grid     : RenderPipeline
   /-- The frame's uniforms, written each frame. -/
   frame    : Buffer
-  /-- The ripples' tile, baked once. -/
-  ripples  : RippleTile
+  /-- The ripples' tile, and the grains', baked once. -/
+  ripples  : Tile
+  grains   : Tile
   /-- The bind group of the frame's uniforms, the floor's nodes and the
-  ripples' tile, for every pipeline here. -/
+  tiles, for every pipeline here. -/
   data     : BindGroup
   /-- The floor's mesh: made again when the detail changes (`remesh`). -/
   floor    : IO.Ref FloorMesh
@@ -83,12 +85,14 @@ def far : Float := 2000
 The frame's uniforms, as WGSL lays out its `Frame`: the view and projection
 as one matrix, where the camera is (and the angle a pixel subtends), the grid, the floor (a patch's cells,
 the leaves' range, the morph fraction, the height's amplitude), the eye's
-place in its leaf cell, with the cell's size, and the ripples (the waves'
+place in its leaf cell, with the cell's size, the ripples (the waves'
 direction, the wavelength, the height; the tile's width, where the
-displacement fades from and to, the cavity's strength): 160 bytes.
+displacement fades from and to, the cavity's strength), and the grains
+(the tile's width, the relief, the speckle): 176 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
-    (floor : Floor) (cells : Nat) (ripples : Ripples) : ByteArray :=
+    (floor : Floor) (cells : Nat) (ripples : Ripples) (grains : Grains) :
+    ByteArray :=
   let cell := floor.leaf / cells.toFloat
   let within (x : Float) := x - (x / cell).floor * cell
   (viewProj.m.toList ++ [camera.x, camera.y, camera.z, pixel]
@@ -97,7 +101,8 @@ def frameBytes (viewProj : Mat4) (camera : Vec3) (pixel : Float) (grid : Grid)
     ++ [within camera.x, within camera.z, cell, 0]
     ++ [ripples.direction.cos, ripples.direction.sin, ripples.wavelength,
         ripples.height]
-    ++ [ripples.tile, ripples.fadeFrom, ripples.fadeTo, ripples.cavity]).foldl
+    ++ [ripples.tile, ripples.fadeFrom, ripples.fadeTo, ripples.cavity]
+    ++ [grains.tile, grains.relief, grains.speckle, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -149,12 +154,12 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
   }
 
 /-- A renderer drawing into targets of `format`, the floor `floor`, its
-ripples `ripples` (baked here). -/
+ripples `ripples` and its grains `grains` (baked here). -/
 def Renderer.create (device : Device) (format : TextureFormat)
-    (floor : Floor) (ripples : Ripples) : IO Renderer := do
+    (floor : Floor) (ripples : Ripples) (grains : Grains) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
-  -- nodes, and the ripples' tile, so that one bind group serves them all
-  -- (a pipeline's own layout is exclusive to it).
+  -- nodes, and the tiles, so that one bind group serves them all (a
+  -- pipeline's own layout is exclusive to it).
   let frameLayout ← device.createBindGroupLayout {
     label   := "frame"
     entries := #[
@@ -165,7 +170,9 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 2, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
       { binding := 3, visibility := .vertex ||| .fragment,
-        sampler := { type := .filtering } }
+        sampler := { type := .filtering } },
+      { binding := 4, visibility := .fragment,
+        texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }
   let layout ← device.createPipelineLayout {
@@ -183,9 +190,10 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let grid ← pipeline device "grid" layout gridModule format
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
-    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples)
+    (frameBytes Mat4.identity Vec3.zero 0 {} floor floor.cells ripples grains)
   let mesh ← FloorMesh.create device floor.cells
   let tile ← ripples.bake device
+  let grainTile ← grains.bake device
   let data ← device.createBindGroup {
     label   := "frame"
     layout  := frameLayout
@@ -193,12 +201,14 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 0, buffer := some frame },
       { binding := 1, buffer := some mesh.nodes },
       { binding := 2, textureView := some tile.view },
-      { binding := 3, sampler := some tile.sampler }
+      { binding := 3, sampler := some tile.sampler },
+      { binding := 4, textureView := some grainTile.view }
     ]
   }
   return {
     device, format, sand, sandWire, grid, frame, data
     ripples := tile
+    grains  := grainTile
     queue   := ← device.getQueue
     floor   := ← IO.mkRef mesh
     drawn   := ← IO.mkRef 0
@@ -258,7 +268,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let floor ← r.floor.get
   r.queue.writeBuffer r.frame 0
     (frameBytes viewProj eye (fovY / (max app.height 1).toFloat) app.grid
-      app.floor floor.cells app.ripples)
+      app.floor floor.cells app.ripples app.grains)
   -- The floor's nodes for this eye and view.
   let nodes := app.floor.quadtree.select eye (Frustum.ofMatrix viewProj)
   r.queue.writeBuffer floor.nodes 0

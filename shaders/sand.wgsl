@@ -2,9 +2,9 @@
 // the one lattice placed and scaled by its node's record, lifted to the
 // floor's height (`height`, in shaders/frame.wgsl) and, near the camera,
 // its ripples' (`rippleHeight`); lit by a sun from above with the normal
-// found at each pixel, from the floor's slope and the ripples', the
-// troughs shaded; fading into the background with distance as the grid
-// does.
+// found at each pixel, from the floor's slope, the ripples' and the
+// grains', the troughs shaded, the colour speckled by the grains; fading
+// into the background with distance as the grid does.
 
 // The nodes drawn this frame: each its corner nearest the origin (x, z)
 // and its size, in whole leaf cells, the corner's from the cell the eye
@@ -126,10 +126,21 @@ fn morph(dist : f32, level : f32) -> f32 {
   let along = (tile.gb * 2.0 - 1.0) * 8.0 * frame.ripple.w / frame.ripple.z;
   let dir = frame.ripple.xy;
   slope += along.x * dir + along.y * vec2f(-dir.y, dir.x);
+  // The grains' tilt, from their tile over the world's axes, filtered
+  // likewise: where they are finer than the pixel, the normal averages
+  // to flat, and shorter (the roughness they leave, Toksvig's measure,
+  // for the lighting to come), so the tilt fades out of its own accord.
+  let grainUV = world.xz / frame.grain.x;
+  let grain = textureSampleGrad(grains, rippleSampler, grainUV,
+                                footAlong / frame.grain.x, footAcross / frame.grain.x);
+  let tilt = grain.rgb * 2.0 - 1.0;
+  slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));
   // The sun low, for now, so that the relief shows.
   let sun = normalize(vec3f(0.8, 0.45, 0.3));
-  let sand = vec3f(0.55, 0.47, 0.30);
+  // The sand's colour, speckled by the grains: each its own brightness,
+  // the gaps between them dark; far off, their mean.
+  let sand = vec3f(0.55, 0.47, 0.30) * mix(1.0, 2.0 * grain.a, frame.grain.z);
   let cavity = mix(1.0, tile.a, frame.tiling.w);
   let light = (0.25 + 0.75 * max(dot(normal, sun), 0.0)) * cavity;
   let color = sand * light;

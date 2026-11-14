@@ -35,15 +35,17 @@ structure Options where
   ripples    : Option Float := none
   /-- Which way the waves run, in degrees from the x axis, if said. -/
   waves      : Option Float := none
-  /-- Write the ripples' tile, as baked, to this file, a PPM image, and
-  end (for looking at the bake). -/
+  /-- Write the ripples' tile, or the grains', as baked, to this file, a
+  PPM image, and end (for looking at the bake). -/
   tile       : Option String := none
+  grainTile  : Option String := none
 
 /-- How to run the demo. -/
 def usage : String :=
   "usage: reef [--frames N] [--windowed] [--headless] [--screenshot FILE] \
     [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off] \
-    [--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]"
+    [--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE] \
+    [--grain-tile FILE]"
 
 /-- `s` as a switch, if it is one. -/
 def parseSwitch (s : String) : Option Bool :=
@@ -93,6 +95,8 @@ def Options.parse : List String → Except String Options
     return { ← Options.parse rest with waves := some degrees }
   | "--tile" :: file :: rest => do
     return { ← Options.parse rest with tile := some file }
+  | "--grain-tile" :: file :: rest => do
+    return { ← Options.parse rest with grainTile := some file }
   | arg :: _ => throw s!"unknown option: {arg}\n{usage}"
 
 /--

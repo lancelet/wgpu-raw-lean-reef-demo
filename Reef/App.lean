@@ -138,6 +138,29 @@ structure Ripples where
 /-- The tile's width, in metres. -/
 def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
 
+/--
+The sand's grains, as `shaders/sand.wgsl` draws them from the tile
+`Reef/Grains.lean` bakes (`shaders/grains.wgsl`): medium sand, with
+fragments of shell and the like among the grains.
+-/
+structure Grains where
+  /-- The tile's width, in metres: a few centimetres, the grains within
+  having no pattern to show its repeating. -/
+  tile      : Float := 0.04
+  /-- The tile's texels a side: a power of two. -/
+  texels    : Nat   := 1024
+  /-- A grain's diameter, in metres. -/
+  grain     : Float := 0.0004
+  /-- A fragment's diameter, in metres, and how many of the fragments'
+  cells (a diameter wide) hold one, 0 none to 1 all. -/
+  fragment  : Float := 0.002
+  fragments : Float := 0.08
+  /-- How much the grains tilt the normal, and speckle the colour: 1 as
+  designed, 0 none. -/
+  relief    : Float := 1
+  speckle   : Float := 1
+  deriving Repr, Inhabited
+
 /-- The tile's height from its lowest to its highest, in metres: the
 ripples' trough to crest (the steepness of the wavelength), and the small
 ripples' and the pits' on top, as the bake sums them. -/
@@ -167,6 +190,7 @@ structure App where
   grid     : Grid          := {}
   floor    : Floor         := {}
   ripples  : Ripples       := {}
+  grains   : Grains        := {}
   detail   : Float         := 1
   overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button

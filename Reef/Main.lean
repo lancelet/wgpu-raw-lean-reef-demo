@@ -166,37 +166,43 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
   IO.println s!"Wrote {path}: {width}x{height}, {← renderer.drawn.get} patches."
 
 /--
-Write the ripples' tile, as baked, to `path` as a PPM image, its height
-and its two slopes as red, green and blue, and its cavity, as grey, to
-`path` with `-cavity` before its extension: for looking at the bake.
+Write `tile`, `texels` a side as baked, to `path` as a PPM image, its
+first three channels as red, green and blue, and its fourth, as grey, to
+`path` with `-alpha` before its extension: for looking at a bake. The
+ripples' tile is height, two slopes and cavity; the grains' a normal and
+brightness.
 -/
-def dumpTile (wgpu : Instance) (device : Device) (renderer : Renderer)
-    (app : App) (path : String) : IO Unit := do
-  let n := app.ripples.texels.toUInt32
-  let (row, pixels) ← readback wgpu device renderer.ripples.texture n n
-  IO.FS.writeBinFile path (ppm n.toNat n.toNat row pixels)
-  let cavity := Id.run do
+def dumpTile (wgpu : Instance) (device : Device) (tile : Tile)
+    (texels : Nat) (path : String) : IO Unit := do
+  let n := texels.toUInt32
+  let (row, pixels) ← readback wgpu device tile.texture n n
+  IO.FS.writeBinFile path (ppm texels texels row pixels)
+  let alpha := Id.run do
     let mut grey := pixels
     for i in [0:pixels.size / 4] do
       let a := pixels[i * 4 + 3]!
       grey := grey.set! (i * 4) a |>.set! (i * 4 + 1) a |>.set! (i * 4 + 2) a
     return grey
   let stem := (path.splitOn ".").dropLast
-  let cavityPath := if stem.isEmpty then path ++ "-cavity"
-    else String.intercalate "." stem ++ "-cavity." ++ (path.splitOn ".").getLast!
-  IO.FS.writeBinFile cavityPath (ppm n.toNat n.toNat row cavity)
-  IO.println s!"Wrote {path} and {cavityPath}: {n}x{n}."
+  let alphaPath := if stem.isEmpty then path ++ "-alpha"
+    else String.intercalate "." stem ++ "-alpha." ++ (path.splitOn ".").getLast!
+  IO.FS.writeBinFile alphaPath (ppm texels texels row alpha)
+  IO.println s!"Wrote {path} and {alphaPath}: {n}x{n}."
 
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     (device : Device) : IO Unit := do
   let window ← options.window 960 540
-  if options.screenshot.isSome || options.tile.isSome then
+  if options.screenshot.isSome || options.tile.isSome
+      || options.grainTile.isSome then
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
-      app.ripples
-    if let some path := options.tile then dumpTile wgpu device renderer app path
+      app.ripples app.grains
+    if let some path := options.tile then
+      dumpTile wgpu device renderer.ripples app.ripples.texels path
+    if let some path := options.grainTile then
+      dumpTile wgpu device renderer.grains app.grains.texels path
     if let some path := options.screenshot then
       screenshot wgpu device renderer app path
     return
@@ -210,7 +216,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
-    initial.ripples
+    initial.ripples initial.grains
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
@@ -272,7 +278,8 @@ end Reef
 open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
-[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]`. -/
+[--relief FACTOR] [--ripples FACTOR] [--waves DEGREES] [--tile FILE]
+[--grain-tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

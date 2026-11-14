@@ -44,7 +44,8 @@ on|off` say whether those show at the start; `--relief FACTOR` and
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
 across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
 its height and slopes (and its cavity, to a `-cavity` file beside it),
-for looking at the bake. How fast it draws, and where the camera is, are
+for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
+normal, and brightness). How fast it draws, and where the camera is, are
 in the bottom right.
 
 The camera is driven as a modelling program's viewport, with no modes: two
@@ -109,8 +110,12 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
 - `Reef/Floor.lean`: the floor's mesh, a quadtree of one patch, its nodes
   chosen each frame by their distance from the eye, morphing between
   levels.
+- `Reef/Tile.lean`: what the sand's baked tiles share: a texture with
+  its mip levels, and its sampler.
 - `Reef/Ripples.lean`: the sand's ripples, one tile of them baked at the
-  start from phasor noise, with its mip levels.
+  start from phasor noise.
+- `Reef/Grains.lean`: the sand's grains, a tile of a few centimetres,
+  baked likewise.
 - `Reef/Render.lean`: the pipelines, and drawing a frame; the wireframe,
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.

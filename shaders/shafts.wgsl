@@ -90,13 +90,15 @@ fn phase(cosine : f32, g : f32) -> f32 {
     // Three levels softer than the pixel asks: the fine matter the light
     // scatters from blurs the columns, the small cells merge, and only
     // the broad bright filaments are left to make rays.
-    let lod = 3.0 + log2(max(1.0, t * pixelAt * texelsAcross / causticTile));
+    let lod = 3.5 + log2(max(1.0, t * pixelAt * texelsAcross / causticTile));
     let gathered = mix(textureSampleLevel(caustics, rippleSampler, uv, layer, lod).rgb,
                        textureSampleLevel(caustics, rippleSampler, uv, next, lod).rgb,
                        blend) * causticBrightest;
     // The rays are the light above the mean, a few times over; the mean
     // itself an even glow, dimmer.
-    let rays = max(gathered - vec3f(1.0), vec3f(0.0)) * 3.0;
+    // Rising smoothly from the mean, so a ray's edge is soft.
+    let above = max(gathered - vec3f(0.9), vec3f(0.0));
+    let rays = above * above * 2.0;
     let focus = mix(vec3f(1.0), vec3f(0.35) + rays, frame.water.y);
     // The sun's light at the step: taken by the water on its way down;
     // and what scatters toward the camera, taken on its way there.

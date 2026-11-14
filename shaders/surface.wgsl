@@ -177,7 +177,7 @@ fn sunInAir() -> vec3f {
     * 0.05 * nearness;
   let at = clamp(0.5 + (screenUV - 0.5) / mirrorOverscan + wobble,
                  vec2f(0.001), vec2f(0.999));
-  // Drawn small, an eighth of the screen, and read softly: five taps, a
+  // Drawn small, a tenth of the screen, and read softly: five taps, a
   // texel and a half apart, which a wavy mirror would blur anyway.
   let texel = 1.5 / vec2f(textureDimensions(reflection));
   var mirror = textureSampleLevel(reflection, reflectionSampler, at, 0.0) * 0.4;
@@ -201,8 +201,11 @@ fn sunInAir() -> vec3f {
   // over sand the underside is a dark blue mirror with the floor faint
   // in it, brighter the steeper the ray goes down.
   let floorSeen = select(vec3f(0.0), fogged(sandLit, mirrored * toFloor * 2.5), toFloor < 1e8);
-  let below = mix(water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0),
-                  mirror.rgb, mirror.a);
+  // The mirrored floor at under half strength in the water's own blue:
+  // the sand's light has come down and up through the water, and the
+  // film's ceiling is blue with a lighter shimmer, not the floor's khaki.
+  let waterBelow = water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0);
+  let below = mix(waterBelow, mirror.rgb * vec3f(0.55, 0.85, 1.1), mirror.a * 0.4);
   var colour = through + below * reflectance;
   // What floats here: a dark shape against the window, the light coming
   // through it a little, green or amber; against the mirror, darker.

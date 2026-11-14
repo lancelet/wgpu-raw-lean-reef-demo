@@ -1,7 +1,6 @@
 import Reef.App
 import Reef.Floor
 import Reef.Overlay
-import Reef.Caustics
 import Reef.Grains
 import Reef.Ripples
 
@@ -28,11 +27,6 @@ direction (`shaders/background.wgsl`), so that where nothing else is,
 there is water; what is drawn after fades into the same water with
 distance (`fogged`, in `shaders/frame.wgsl`). The frame is cleared to
 nothing in particular.
-
-## The caustics
-
-Before the frame's pass, the caustics' (`Reef/Caustics.lean`): the
-surface's waves drawn down the sun's rays into a texture the sand reads.
 
 ## The wireframe
 
@@ -68,8 +62,7 @@ structure Renderer where
   /-- The format drawn in: the targets' views are of it. -/
   format   : TextureFormat
   /-- The sand's pipeline, and its wireframe's. -/
-  backdrop : RenderPipeline
-  caustics : Caustics
+  water    : RenderPipeline
   sand     : RenderPipeline
   sandWire : RenderPipeline
   grid     : RenderPipeline
@@ -108,8 +101,7 @@ displacement fades from and to, the cavity's strength), the grains (the
 tile's width, the relief, the speckle), the sun's direction, the camera's
 basis (with the tangents of half the view's width and height), the
 screen (its size, the time), and the water (the surface's height, the
-caustics' strength; the extinction; the colours; the waves; the caustics'
-texture and grid): 400 bytes.
+caustics; the extinction; the colours): 368 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
@@ -134,11 +126,9 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v camera.right (tanHalf * aspect) ++ v camera.up tanHalf
     ++ v camera.forward 0
     ++ [width, height, time, 0]
-    ++ [w.depth, w.focus, 0, 0]
+    ++ [w.depth, w.caustic, w.focus, w.speed]
     ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
-    ++ v w.sunlight 1 ++ v w.skylight 1
-    ++ [w.tile, w.wavelength, w.steepness, w.spread]
-    ++ [w.texels.toFloat, w.grid.toFloat, w.margin, 0]).foldl
+    ++ v w.sunlight 1 ++ v w.skylight 1).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/
@@ -190,10 +180,9 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
   }
 
 /-- A renderer drawing into targets of `format`, the floor `floor`, its
-ripples `ripples` and its grains `grains` (baked here), under `water`. -/
+ripples `ripples` and its grains `grains` (baked here). -/
 def Renderer.create (device : Device) (format : TextureFormat)
-    (floor : Floor) (ripples : Ripples) (grains : Grains) (water : Water) :
-    IO Renderer := do
+    (floor : Floor) (ripples : Ripples) (grains : Grains) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
   -- nodes, and the tiles, so that one bind group serves them all (a
   -- pipeline's own layout is exclusive to it).
@@ -211,23 +200,11 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 4, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
       { binding := 5, visibility := .fragment,
-        texture := { sampleType := .float, viewDimension := .«2d» } },
-      { binding := 6, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } }
     ]
   }
   let layout ← device.createPipelineLayout {
     label := "frame", bindGroupLayouts := #[frameLayout]
-  }
-  -- The caustics' pass has the frame's uniforms alone: it draws into the
-  -- texture the others read.
-  let uniformsLayout ← device.createBindGroupLayout {
-    label   := "uniforms"
-    entries := #[{ binding := 0, visibility := .vertex ||| .fragment,
-                   buffer := { type := .uniform } }]
-  }
-  let uniformsOnly ← device.createPipelineLayout {
-    label := "uniforms", bindGroupLayouts := #[uniformsLayout]
   }
   -- Each material's module: the frame's uniforms, the wireframe's entry,
   -- then its own.
@@ -235,8 +212,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let sandModule ← createShader device "sand" (shared ++ Shaders.sand)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
-  let causticModule ← createShader device "caustics" (shared ++ Shaders.caustics)
-  let backdrop ← pipeline device "water" layout waterModule format
+  let water ← pipeline device "water" layout waterModule format
     (depthCompare := .always) (depthWrite := false)
   let sand ← pipeline device "sand" layout sandModule format #[latticeLayout]
   let sandWire ← pipeline device "sand wire" layout sandModule format
@@ -246,9 +222,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     (depthCompare := .always) (depthWrite := false) (blend := some overBlend)
   let frame ← createBuffer device "frame" .uniform
     (frameBytes Mat4.identity Camera.initial 1 1 1 1 0 {} floor floor.cells
-      ripples grains {} water)
-  let caustics ← Caustics.create device water causticModule uniformsOnly
-    uniformsLayout frame
+      ripples grains {} {})
   let mesh ← FloorMesh.create device floor.cells
   let (tile, horizons) ← ripples.bake device
   let grainTile ← grains.bake device
@@ -261,12 +235,11 @@ def Renderer.create (device : Device) (format : TextureFormat)
       { binding := 2, textureView := some tile.view },
       { binding := 3, sampler := some tile.sampler },
       { binding := 4, textureView := some grainTile.view },
-      { binding := 5, textureView := some horizons.view },
-      { binding := 6, textureView := some caustics.view }
+      { binding := 5, textureView := some horizons.view }
     ]
   }
   return {
-    device, format, backdrop, caustics, sand, sandWire, grid, frame, data, horizons
+    device, format, water, sand, sandWire, grid, frame, data, horizons
     ripples := tile
     grains  := grainTile
     queue   := ← device.getQueue
@@ -339,7 +312,6 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let view ← texture.createView (some { format := r.format })
   let depth ← r.depthFor app.width app.height
   let encoder ← r.device.createCommandEncoder none
-  r.caustics.encode encoder
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{
       view       := some view
@@ -355,7 +327,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     }
   }
   pass.setBindGroup 0 (some r.data) #[]
-  pass.setPipeline r.backdrop
+  pass.setPipeline r.water
   pass.draw 3 1 0 0
   pass.setPipeline r.sand
   r.drawFloor pass count (wire := false)

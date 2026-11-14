@@ -2,6 +2,7 @@ import Reef.App
 import Reef.Floor
 import Reef.Overlay
 import Reef.Caustics
+import Reef.Snow
 import Reef.Grains
 import Reef.Ripples
 import Reef.Timing
@@ -86,6 +87,9 @@ structure Renderer where
   /-- The sand's pipeline, and its wireframe's. -/
   backdrop : RenderPipeline
   surface  : RenderPipeline
+  /-- The marine snow, and the last frame's time, for its step. -/
+  snow     : Snow
+  lastTime : IO.Ref Float
   /-- The reflection: a mirrored frame's uniforms, its own nodes, the bind
   group of them, and the surface's layout for the texture it is drawn
   into. -/
@@ -273,7 +277,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 5, visibility := .fragment,
         texture := { sampleType := .float, viewDimension := .«2d» } },
-      { binding := 6, visibility := .fragment,
+      { binding := 6, visibility := .vertex ||| .fragment,
         texture := { sampleType := .float, viewDimension := .«2dArray» } },
       { binding := 7, visibility := .vertex ||| .fragment ||| .compute,
         buffer := { type := .readOnlyStorage } }
@@ -289,6 +293,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
   let gridModule ← createShader device "grid" (shared ++ Shaders.grid)
   let waterModule ← createShader device "water" (shared ++ Shaders.background)
   let surfaceModule ← createShader device "surface" (shared ++ Shaders.surface)
+  let snow ← Snow.create device water shared frameLayout sceneFormat depthFormat
   let mirrorLayout ← device.createBindGroupLayout {
     label   := "reflection"
     entries := #[
@@ -422,7 +427,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     ]
   }
   return {
-    device, format, backdrop, surface, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
+    device, format, backdrop, surface, snow, mirrorFrame, mirrorNodes, mirrorData, mirrorLayout,
     mirrorSampler, surfaceIndices, shafts, shaftLayout, sand,
     sandWire, grid, frame, data, horizons, caustics, shaftBlend, shaftBlendLayout,
     shaftSampler, resolve, resolveLayout
@@ -439,6 +444,7 @@ def Renderer.create (device : Device) (format : TextureFormat)
     overlay := ← Overlay.create device format depthFormat
     timing  := ← Timing.create device timestamps passes.size
     frames  := ← IO.mkRef 0
+    lastTime := ← IO.mkRef 0
   }
 
 /-- The floor's mesh made again, for `floor` as it is now: its patch; the
@@ -575,6 +581,11 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   -- caustics' loop is at.
   let loop := app.water.loop
   r.caustics.evolve r.queue encoder (app.time - (app.time / loop).floor * loop)
+  -- The snow, a step on.
+  let last ← r.lastTime.get
+  r.lastTime.set app.time
+  r.snow.step r.queue encoder r.data (min 0.1 (max 0 (app.time - last)))
+    app.water.snowReach app.time
   -- The reflection, first: the sand as the surface mirrors it.
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{ view := some depth.mirror, loadOp := .clear,
@@ -613,6 +624,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   pass.setBindGroup 1 (some depth.mirrorData) #[]
   pass.setIndexBuffer r.surfaceIndices .uint32 0 (r.surfaceCount.toUInt64 * 4)
   pass.drawIndexed r.surfaceCount 1 0 0 0
+  r.snow.draw pass
   pass.«end»
   -- The light in the water, at half size, reading the scene's depth;
   -- then added over the scene, smoothed.

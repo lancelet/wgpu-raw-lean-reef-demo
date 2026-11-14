@@ -169,13 +169,15 @@ def Ripples.height (r : Ripples) : Float :=
   r.steepness * r.wavelength * r.amplitude * (1 + r.fine + r.pitDepth)
 
 /-- The sun, as `shaders/sand.wgsl` lights by it: where it is in the sky.
-Under water the sun is never lower than about 40 degrees from the
-vertical, refraction bending it up; as high as that by default. -/
+Under water the sun is never lower than about 41 degrees up, the surface
+bending even a setting sun that high; there by default, as low as it
+honestly can be, so that the ripples' shade shows (lower still is
+allowed, for the look). -/
 structure Sun where
   /-- Round from the x axis, in radians. -/
   azimuth   : Float := 0.36
   /-- Up from the horizon, in radians. -/
-  elevation : Float := 0.87
+  elevation : Float := 0.72
   deriving Repr, Inhabited
 
 /-- The direction the sun's light comes from: unit, up. -/

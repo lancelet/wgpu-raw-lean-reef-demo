@@ -9,6 +9,17 @@
 // mirror of the deep (Fresnel's equations between: some of each). Then
 // the water between the camera and the surface fogs it as everything.
 
+// The scene below as the surface mirrors it (`Reef/Render.lean`): the
+// sand drawn from the camera's mirror image above the surface, at half
+// size, into a texture laid out as the screen; transparent where there
+// is no sand.
+@group(1) @binding(0) var reflection : texture_2d<f32>;
+@group(1) @binding(1) var reflectionSampler : sampler;
+
+// How much wider the reflection's view is than the screen's
+// (`Reef.mirrorOverscan`, which must agree).
+const mirrorOverscan = 1.3;
+
 struct Out {
   @builtin(position) position : vec4f,
   @location(0) relative : vec3f,  // to the camera
@@ -60,7 +71,15 @@ fn spaced(c : f32, radius : f32) -> f32 {
 // to the eye from a spread of directions, the glitter; and a soft halo.
 fn sky(dir : vec3f) -> vec3f {
   let up = clamp(dir.y, 0.0, 1.0);
-  let base = mix(vec3f(0.85, 0.92, 1.0), vec3f(0.25, 0.45, 0.9), pow(up, 0.6));
+  var base = mix(vec3f(0.85, 0.92, 1.0), vec3f(0.25, 0.45, 0.9), pow(up, 0.6));
+  // The clouds: white where the sun is behind the eye, grey beneath,
+  // bright at their edges toward the sun.
+  if (dir.y > 0.02) {
+    let layer = frame.camera.xz + dir.xz / dir.y * cloudHeight;
+    let cloud = cloudsAt(layer, frame.screen.z);
+    let lit = 0.75 + 0.35 * max(dot(dir, sunInSky()), 0.0);
+    base = mix(base, vec3f(0.95, 0.96, 0.98) * lit, cloud * smoothstep(0.02, 0.15, dir.y));
+  }
   let sunAir = sunInAir();
   let toSun = max(dot(dir, -sunAir), 0.0);
   let disc = pow(toSun, 4000.0) * 400.0;
@@ -139,6 +158,34 @@ fn sunInAir() -> vec3f {
   // water the ceiling is a bright mirror near the window, and the
   // water's blue far off, where the ray grazes.
   let mirrored = reflect(toSurface, n);
+  // The sand, as the surface mirrors it: the reflection's texture at
+  // this pixel, moved by the surface's tilt, as a wavy mirror moves its
+  // image.
+  let screenUV = in.position.xy / frame.screen.xy;
+  // The reflection is drawn over a wider view than the screen's (by
+  // `mirrorOverscan`), so the screen is its middle and the wobble always
+  // has picture to pull from. The wobble by the waves' smooth slope only
+  // (the capillaries would tear it), and less the nearer the surface: a
+  // near patch of a wavy mirror shows a small piece of the floor.
+  let calm = normalize(vec3f(-sea.y, 1.0, -sea.z));
+  let nearness = smoothstep(1.0, 12.0, dist);
+  let wobble = vec2f(dot(calm, frame.right.xyz), -dot(calm, frame.up.xyz))
+    * 0.05 * nearness;
+  let at = clamp(0.5 + (screenUV - 0.5) / mirrorOverscan + wobble,
+                 vec2f(0.001), vec2f(0.999));
+  // Drawn small, an eighth of the screen, and read softly: five taps, a
+  // texel and a half apart, which a wavy mirror would blur anyway.
+  let texel = 1.5 / vec2f(textureDimensions(reflection));
+  var mirror = textureSampleLevel(reflection, reflectionSampler, at, 0.0) * 0.4;
+  mirror += textureSampleLevel(reflection, reflectionSampler,
+                               clamp(at + vec2f(texel.x, 0.0), vec2f(0.001), vec2f(0.999)), 0.0) * 0.15;
+  mirror += textureSampleLevel(reflection, reflectionSampler,
+                               clamp(at - vec2f(texel.x, 0.0), vec2f(0.001), vec2f(0.999)), 0.0) * 0.15;
+  mirror += textureSampleLevel(reflection, reflectionSampler,
+                               clamp(at + vec2f(0.0, texel.y), vec2f(0.001), vec2f(0.999)), 0.0) * 0.15;
+  mirror += textureSampleLevel(reflection, reflectionSampler,
+                               clamp(at - vec2f(0.0, texel.y), vec2f(0.001), vec2f(0.999)), 0.0) * 0.15;
+  mirror = vec4f(mirror.rgb * 0.9, mirror.a);
   // The sand's light has come down through the water, and goes up
   // through it again to the surface: the water's colour twice over, and
   // the sun's warmth mostly gone from it.
@@ -150,7 +197,24 @@ fn sunInAir() -> vec3f {
   // over sand the underside is a dark blue mirror with the floor faint
   // in it, brighter the steeper the ray goes down.
   let floorSeen = select(vec3f(0.0), fogged(sandLit, mirrored * toFloor * 2.5), toFloor < 1e8);
-  let below = water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0);
-  let colour = through + below * reflectance;
+  let below = mix(water(mirrored) * 1.5 + floorSeen * 0.3 * max(-mirrored.y, 0.0),
+                  mirror.rgb, mirror.a);
+  var colour = through + below * reflectance;
+  // What floats here: a dark shape against the window, the light coming
+  // through it a little, green or amber; against the mirror, darker.
+  let footprint = max(length(fwidth(world)), 0.002);
+  var floating = vec2f(0.0);
+  if (dist < 40.0) {
+    floating = debrisAt(world, swellAt(world, frame.screen.z).offset, frame.screen.z, footprint);
+  }
+  if (floating.x > 0.0) {
+    var tint = vec3f(0.22, 0.28, 0.08);
+    if (floating.y > 0.5) { tint = vec3f(0.14, 0.24, 0.06); }
+    if (floating.y > 1.5) { tint = vec3f(0.32, 0.2, 0.05); }
+    if (floating.y > 2.5) { tint = vec3f(0.2, 0.18, 0.14); }
+    let backlit = dot(through, vec3f(0.3, 0.5, 0.2));
+    let thing = tint * (0.15 + 0.5 * backlit) + below * 0.05;
+    colour = mix(colour, thing, floating.x);
+  }
   return vec4f(fogged(colour, in.relative), 1.0);
 }

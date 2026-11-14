@@ -78,6 +78,10 @@ fn phase(cosine : f32, g : f32) -> f32 {
   let texelsAcross = f32(textureDimensions(caustics).x);
   let pixelAt = frame.camera.w;  // radians a pixel
   var light = vec3f(0.0);
+  // The sky's light scattered too, from every direction: brightest just
+  // under the surface, where the sky is all above, fading with depth.
+  var ambient = vec3f(0.0);
+  let clouds = cloudShade(frame.camera.xyz, frame.screen.z);
   let offset = dither(pixel);
   // The swell's drift of the chop, found once, at the march's middle: it
   // varies over tens of metres, and the march is shorter than that.
@@ -111,7 +115,8 @@ fn phase(cosine : f32, g : f32) -> f32 {
     // and what scatters toward the camera, taken on its way there.
     let down = exp(-extinct * toSurface);
     let toCamera = exp(-extinct * t);
-    light += frame.sunlight.rgb * focus * down * toCamera * dt;
+    light += frame.sunlight.rgb * focus * down * toCamera * dt * clouds;
+    ambient += frame.skylight.rgb * exp(-extinct * (frame.water.x - p.y) * 2.0) * toCamera * dt;
   }
-  return vec4f(light * extinct * scatter * frame.shaft.x, 1.0);
+  return vec4f(light * extinct * scatter * frame.shaft.x + ambient * extinct * 0.35, 1.0);
 }

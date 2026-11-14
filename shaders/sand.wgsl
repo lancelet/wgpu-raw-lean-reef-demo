@@ -17,6 +17,7 @@
 struct Out {
   @builtin(position) position : vec4f,
   @location(0)       relative : vec3f,  // to the camera
+  @location(1)       slope    : vec2f,  // the floor's, found at the vertex
   @location(7)       bary     : vec3f,  // the wireframe's (shaders/wire.wgsl)
 }
 
@@ -98,6 +99,12 @@ fn morph(dist : f32, level : f32) -> f32 {
   out.relative = floorAt(node.xy + morphed * step);
   out.position = frame.viewProj * vec4f(out.relative, 1.0);
   out.bary = barycentric(index);
+  // The floor's slope, by differences a cell either side, here at the
+  // vertex rather than at every pixel: the mesh is fine enough for the
+  // floor's height, which is smooth at its scale; the ripples and grains
+  // finer than it are the pixel's.
+  let cellSize = step * frame.eye.z;
+  out.slope = floorSlope(out.relative.xz + frame.camera.xz, max(cellSize, 0.03));
   return out;
 }
 
@@ -203,7 +210,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let foot = dist * frame.camera.w;
   // The floor's slope at this pixel, by differences a footprint wide, at
   // least a few centimetres: smooth, whatever the tessellation.
-  var slope = floorSlope(world.xz, max(foot, 0.03));
+  var slope = in.slope;
   let floorNormal = normalize(vec3f(-slope.x, 1.0, -slope.y));
   let slant = max(abs(dot(floorNormal, view)), 0.02);
   let ahead = select(vec2f(1.0, 0.0), normalize(view.xz), length(view.xz) > 1e-4);
@@ -265,6 +272,15 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // the swell has carried the chop there from: the caustics slide with
   // each wave.
   var onSurface = world.xz + sun.xz * toSurface;
+  // What floats there shades the floor under it, softly by the sun's
+  // width over the depth; and the clouds overhead, a kilometre up.
+  // (Near only: past a dozen metres the shadows are lost in the water.)
+  var floating = 0.0;
+  if (dist < 12.0) {
+    floating = debrisAt(onSurface, swellDriftAt(onSurface, frame.screen.z), frame.screen.z,
+                        0.004 + toSurface * 0.0093).x;
+  }
+  let shaded = (1.0 - 0.85 * floating) * cloudShade(world, frame.screen.z);
   // And where the swell has carried the chop there from, and how the
   // swell's own tilt and curvature bend and gather the light on its way
   // down: a shift of the pattern, and a few percent of brightness, a
@@ -288,7 +304,7 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   let gathered = mix(textureSampleGrad(caustics, rippleSampler, uv, layer, dx, dy).rgb,
                      textureSampleGrad(caustics, rippleSampler, uv, next, dx, dy).rgb,
                      fract(moment)) * causticBrightest;
-  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z;
+  let focus = mix(vec3f(1.0), gathered, frame.water.y) * bending.z * shaded;
   let light = frame.skylight.rgb * cavity
     + frame.sunlight.rgb * roughDiffuse(normal, sun, -view, sigma2) * lit * focus;
   let color = sand * light;

@@ -257,7 +257,8 @@ def dumpTile (wgpu : Instance) (device : Device) (tile : Tile)
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     (device : Device) (timestamps : Bool) : IO Unit := do
-  let window ← options.window 960 540
+  let (w, h) := options.size.getD (960, 540)
+  let window ← options.window w.toUInt32 h.toUInt32
   if options.screenshot.isSome || options.tile.isSome
       || options.grainTile.isSome || options.causticTile.isSome then
     let (width, height) ← window.size

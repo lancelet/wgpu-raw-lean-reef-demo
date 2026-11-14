@@ -29,7 +29,7 @@ struct Frame {
   surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
   shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
   swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
-  swellK   : vec4f,  // the swell's three waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber); w unused
+  swellK   : vec4f,  // the swell's four waves' wave numbers, radians a metre, by the dispersion relation at the water's depth (Reef.waveNumber)
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -68,14 +68,19 @@ const gravity = 9.81;
 // phase, and how long its set is, in seconds. (Not arrays: indexing a
 // constant array at run time came out as nothing on Metal.)
 fn swellParams(i : i32) -> vec4f {
-  if (i == 0) { return vec4f(1.0, 0.5, 0.0, 0.0); }
-  if (i == 1) { return vec4f(1.21, 0.3, 1.0, 2.1); }
-  return vec4f(0.83, 0.2, -0.7, 4.4);
+  if (i == 0) { return vec4f(1.0, 0.45, 0.0, 0.0); }
+  if (i == 1) { return vec4f(1.21, 0.25, 1.0, 2.1); }
+  if (i == 2) { return vec4f(0.83, 0.15, -0.7, 4.4); }
+  // A second sea crossing the first, from a wind elsewhere: longer,
+  // lower, half a right angle and more off; where the two cross, the
+  // surface's crests and troughs knot into diamonds.
+  return vec4f(1.55, 0.2, 3.6, 1.3);
 }
 fn swellSet(i : i32) -> f32 {
   if (i == 0) { return 73.0; }
   if (i == 1) { return 101.0; }
-  return 59.0;
+  if (i == 2) { return 59.0; }
+  return 89.0;
 }
 
 // Which way wave `i` heads: about the waves' direction (the ripples').
@@ -96,6 +101,7 @@ fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
   var k = frame.swellK.x;
   if (i == 1) { k = frame.swellK.y; }
   if (i == 2) { k = frame.swellK.z; }
+  if (i == 3) { k = frame.swellK.w; }
   // The set: the wave's amplitude swelling and fading, slowly.
   let swelling = 0.7 + 0.3 * sin(t * tau / swellSet(i) + p.w * 1.7);
   let amplitude = frame.swell.x * 0.5 * p.y * swelling;
@@ -128,7 +134,7 @@ fn swellAt(xz : vec2f, t : f32) -> Swell {
   // The trochoid's slope: the height's rate against the surface's
   // sideways motion, summed over the waves as a product would be.
   var sideways = 1.0;
-  for (var i = 0; i < 3; i++) {
+  for (var i = 0; i < 4; i++) {
     let w = swellWave(i, xz, t);
     let heading = swellHeading(i);
     let reach = w.x / tanh(w.y * depth);
@@ -150,7 +156,7 @@ fn swellAt(xz : vec2f, t : f32) -> Swell {
 fn surgeAt(xz : vec2f, t : f32) -> vec2f {
   var surge = vec2f(0.0);
   let depth = frame.water.x;
-  for (var i = 0; i < 3; i++) {
+  for (var i = 0; i < 4; i++) {
     let w = swellWave(i, xz, t);
     let omega = tau / (frame.swell.y * swellParams(i).x);
     surge += w.x * omega / sinh(w.y * depth) * sin(w.z) * swellHeading(i);
@@ -278,4 +284,119 @@ fn floorSlope(xz : vec2f, e : f32) -> vec2f {
   let dx = height(xz + vec2f(e, 0.0)) - height(xz - vec2f(e, 0.0));
   let dz = height(xz + vec2f(0.0, e)) - height(xz - vec2f(0.0, e));
   return vec2f(dx, dz) / (2.0 * e);
+}
+
+// The sun as it is in the air, where the light comes from (up): Snell's
+// law bends the water's direction (`frame.sun`) further from the
+// vertical.
+fn sunInSky() -> vec3f {
+  let horizontal = frame.sun.xz;
+  let sinWater = length(horizontal);
+  let sinAir = min(1.333 * sinWater, 0.9995);
+  let along = horizontal / max(sinWater, 1e-5);
+  return vec3f(along.x * sinAir, sqrt(1.0 - sinAir * sinAir), along.y * sinAir);
+}
+
+// The clouds over the reef, at `xz` on their layer a kilometre up, at
+// `t`: 0 clear sky to 1 thick cloud. Fair-weather cumulus, a few hundred
+// metres across, a third of the sky, drifting with the wind.
+const cloudHeight = 1000.0;
+fn cloudsAt(xz : vec2f, t : f32) -> f32 {
+  let p = (xz - frame.ripple.xy * t * 6.0) / 350.0;
+  let n = 0.6 * noise(p) + 0.3 * noise(p * 2.3 + 5.0) + 0.1 * noise(p * 5.1 + 9.0);
+  return smoothstep(0.08, 0.38, n);
+}
+
+// How much of the sun's light the clouds let through to `world`, under
+// the water: where the sun's ray through it met the cloud layer. Shadows
+// a few hundred metres across pass over the reef, softly.
+fn cloudShade(world : vec3f, t : f32) -> f32 {
+  let up = sunInSky();
+  let layer = world.xz + up.xz / max(up.y, 0.1) * cloudHeight;
+  return 1.0 - 0.65 * cloudsAt(layer, t);
+}
+
+// What floats on the surface at `xz` (where the surface is), at `t`,
+// within an edge `edge` metres soft: how much of it there is, 0 to 1,
+// and which: 0 a leaf, 1 a blade of seagrass, 2 a clump of sargassum,
+// 3 flecks. Things a lagoon by a vegetated cay carries: flecks of
+// organic matter everywhere, seagrass blades and leaves a few to ten
+// square metres; gathered by the wind's surface circulation (Langmuir's)
+// into windrows, lines along the wind eight metres or so apart, dense in
+// the lines and sparse between, wandering. One to some of the cells of a
+// grid a metre and a half across, riding with the water (the swell's
+// orbits, `offset`, and the wind's slow drift), each turned its own way
+// and turning slowly; kept well inside its cell, so that a point need
+// look in its own cell only.
+fn debrisAt(xz : vec2f, offset : vec2f, t : f32, edge : f32) -> vec2f {
+  let dir = frame.ripple.xy;
+  let rest = xz - offset - dir * t * 0.12;
+  let cell = 1.5;
+  let base = vec2i(floor(rest / cell));
+  // The windrows: across the wind, every eight metres or so, wandering.
+  let across = dot(rest, vec2f(-dir.y, dir.x));
+  let along = dot(rest, dir);
+  let row = abs(fract((across + 2.0 * noise(vec2f(along / 20.0, 3.0))) / 8.0) - 0.5) * 2.0;
+  let gathered = mix(0.12, 0.9, smoothstep(0.75, 0.95, row));
+  var cover = 0.0;
+  var kind = 0.0;
+  for (var j = 0; j <= 0; j++) {
+    for (var i = 0; i <= 0; i++) {
+      let c = base + vec2i(i, j);
+      var h = (u32(c.x) * 0x8da6b343u) ^ (u32(c.y) * 0xd8163841u) ^ 0x9e37u;
+      h = h ^ (h >> 15u); h = h * 0x2c1b3c6du; h = h ^ (h >> 12u);
+      let r0 = f32(h & 0xffu) / 255.0;
+      let r1 = f32((h >> 8u) & 0xffu) / 255.0;
+      let r2 = f32((h >> 16u) & 0xffu) / 255.0;
+      let r3 = f32((h >> 24u) & 0xffu) / 255.0;
+      // Flecks wherever; the larger things where the rows gather them.
+      let chance = select(gathered * 0.5, 0.6, r3 < 0.35);
+      if (r0 > chance) { continue; }
+      let centre = (vec2f(c) + vec2f(r1, r2) * 0.64 + 0.18) * cell;
+      let angle = r3 * 6.2832 + t * (r1 - 0.5) * 0.15;
+      let along = vec2f(cos(angle), sin(angle));
+      let d = rest - centre;
+      let u = dot(d, along);
+      let v = dot(d, vec2f(-along.y, along.x));
+      // Flecks the most, then seagrass, leaves, and sargassum the least.
+      let pick = fract(r0 * 7.31 + r3 * 3.7);
+      var which = 3.0;
+      if (r3 >= 0.35) {
+        if (pick < 0.45) { which = 1.0; } else if (pick < 0.8) { which = 0.0; } else { which = 2.0; }
+      }
+      var sd = 1.0;  // signed distance, metres, inside negative
+      if (which < 1.0) {
+        // A leaf: an almond eight to fourteen centimetres long.
+        let len = 0.04 + 0.03 * r2;
+        let wid = len * 0.45 * (1.0 - (u / len) * (u / len));
+        sd = max(abs(u) - len, abs(v) - max(wid, 0.0));
+      } else if (which < 2.0) {
+        // A blade of seagrass: a strip a centimetre wide, twenty to
+        // forty long, gently curved.
+        let len = 0.1 + 0.1 * r1;
+        let bend = v - 0.6 * (u * u) / len * (r2 - 0.5);
+        sd = max(abs(u) - len, abs(bend) - 0.005);
+      } else if (which < 3.0) {
+        // Sargassum: a clump of little bladders and fronds.
+        sd = 1.0;
+        for (var k = 0u; k < 7u; k++) {
+          let a = f32(k) * 2.39996 + r3 * 6.0;
+          let rad = (0.03 + 0.08 * fract(f32(k) * 0.618 + r1)) * (0.8 + 0.4 * r2);
+          let at = vec2f(cos(a), sin(a)) * rad;
+          sd = min(sd, length(vec2f(u, v) - at) - (0.012 + 0.012 * fract(f32(k) * 0.37 + r2)));
+        }
+      } else {
+        // Flecks: a few specks, a few millimetres each.
+        sd = 1.0;
+        for (var k = 0u; k < 5u; k++) {
+          let a = f32(k) * 2.39996 + r2 * 6.0;
+          let at = vec2f(cos(a), sin(a)) * (0.05 + 0.15 * fract(f32(k) * 0.71 + r3));
+          sd = min(sd, length(vec2f(u, v) - at) - 0.004);
+        }
+      }
+      let here = 1.0 - smoothstep(-edge, edge, sd);
+      if (here > cover) { cover = here; kind = which; }
+    }
+  }
+  return vec2f(cover, kind);
 }

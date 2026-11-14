@@ -162,7 +162,7 @@ def waveNumber (period depth : Float) : Float := Id.run do
 
 /-- The periods of the swell's three waves, as fractions of its own
 (`shaders/frame.wgsl` has the same). -/
-def swellPeriodFractions : Array Float := #[1, 1.21, 0.83]
+def swellPeriodFractions : Array Float := #[1, 1.21, 0.83, 1.55]
 
 /--
 The sand's grains, as `shaders/sand.wgsl` draws them from the tile
@@ -270,7 +270,7 @@ structure Water where
   the surface's bright filaments: its strength, 0 none; the steps a pixel
   marches its ray; and how far, in metres. -/
   shafts        : Float := 0.6
-  shaftSteps    : Nat   := 24
+  shaftSteps    : Nat   := 12
   shaftReach    : Float := 30
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
   before the filmic curve. -/

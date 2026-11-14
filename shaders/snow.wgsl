@@ -179,14 +179,17 @@ fn scattered(cosine : f32, g : f32) -> f32 {
   let shade = cloudShade(p, t) * (1.0 - 0.85 * floating);
   let toward = scattered(dot(sun, -view), 0.6) * 4.0 * 3.14159265;
   let sunlit = frame.sunlight.rgb * focus * down * shade * (0.3 + toward);
-  // Its own colour, after the film's motes: pale and warm, cream the
-  // most, some a pale olive, some a light tan, a few white; each its own
-  // shade of its kind. The water's colour comes between it and the eye.
+  // (Saturated beyond what they would be in hand: a faint warm dot over
+  // the water's blue averages toward grey.)
+  // Its own colour, after the film's motes but warmer and more living:
+  // olive the most, brown next, a light tan, and only a few cream; each
+  // its own shade of its kind. The water's colour comes between it and
+  // the eye.
   let tone = 0.85 + 0.3 * fract(m.tint * 13.7);
-  var albedo = vec3f(0.98, 0.92, 0.78);                                       // cream
-  if (m.tint >= 0.5 && m.tint < 0.75) { albedo = vec3f(0.82, 0.88, 0.64); }   // pale olive
-  else if (m.tint >= 0.75 && m.tint < 0.95) { albedo = vec3f(0.9, 0.78, 0.6); } // tan
-  else if (m.tint >= 0.95) { albedo = vec3f(1.05, 1.05, 1.02); }              // white
+  var albedo = vec3f(0.62, 0.74, 0.2);                                         // olive
+  if (m.tint >= 0.4 && m.tint < 0.75) { albedo = vec3f(0.78, 0.46, 0.18); }    // brown
+  else if (m.tint >= 0.75 && m.tint < 0.95) { albedo = vec3f(0.84, 0.64, 0.34); } // tan
+  else if (m.tint >= 0.95) { albedo = vec3f(0.95, 0.9, 0.76); }                // cream
   albedo = albedo * tone;
   // The sky's light by its brightness, not its blue (the water's blue
   // is the fog's to add, between the fleck and the eye).

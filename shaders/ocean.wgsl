@@ -57,7 +57,7 @@ fn rand(seed : u32, n : u32) -> f32 {
 
 // Two numbers from a Gaussian, mean 0, spread 1, for the cell `c`.
 fn gaussian(c : vec2u) -> vec2f {
-  let seed = c.x * 0x8da6b343u ^ c.y * 0xd8163841u;
+  let seed = (c.x * 0x8da6b343u) ^ (c.y * 0xd8163841u);
   let u1 = max(rand(seed, 0u), 1e-6);
   let u2 = rand(seed, 1u);
   let r = sqrt(-2.0 * log(u1));

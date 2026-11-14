@@ -126,7 +126,7 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v camera.right (tanHalf * aspect) ++ v camera.up tanHalf
     ++ v camera.forward 0
     ++ [width, height, time, 0]
-    ++ [w.depth, w.caustic, w.focus, 0]
+    ++ [w.depth, w.caustic, w.focus, w.speed]
     ++ v w.extinction 0 ++ v w.horizon 1 ++ v w.zenith 1 ++ v w.deep 1
     ++ v w.sunlight 1 ++ v w.skylight 1).foldl
     pushF32 ByteArray.empty

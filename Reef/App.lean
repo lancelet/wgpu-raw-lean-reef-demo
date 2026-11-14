@@ -212,9 +212,12 @@ structure Water where
   sunlight   : Vec3  := ⟨1.05, 0.92, 0.70⟩
   skylight   : Vec3  := ⟨0.18, 0.30, 0.33⟩
   /-- The caustics: a cell's width on the surface, in metres, and their
-  strength, 0 none to 1 as designed. -/
+  strength, 0 none to 1 as designed; and the speed of the waves that make
+  them, in metres a second (chop of half a metre to a metre runs at
+  about one). -/
   caustic    : Float := 0.35
   focus      : Float := 1
+  speed      : Float := 0.8
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

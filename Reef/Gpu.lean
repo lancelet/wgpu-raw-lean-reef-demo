@@ -13,19 +13,22 @@ open WebGPU.Raw
 namespace Reef
 
 /--
-Request an adapter, then a device on it, then go on with `k`: natively,
-during this call; in a browser, after `main` has returned.
+Request an adapter, then a device on it, with timestamps if the adapter
+can write them (`k` is told), then go on with `k`: natively, during this
+call; in a browser, after `main` has returned.
 -/
-def withDevice (k : Instance → Adapter → Device → IO Unit) : IO Unit := do
+def withDevice (k : Instance → Adapter → Device → Bool → IO Unit) : IO Unit := do
   let wgpu ← createInstance none
   let _ ← wgpu.requestAdapter none .allowSpontaneous fun _ adapter message => do
     let some adapter := adapter
       | throw (IO.userError s!"no adapter: {message}")
-    let _ ← adapter.requestDevice none .allowSpontaneous
-      fun _ device message => do
+    let timestamps ← adapter.hasFeature .timestampQuery
+    let features := if timestamps then #[FeatureName.timestampQuery] else #[]
+    let _ ← adapter.requestDevice (some { requiredFeatures := features })
+      .allowSpontaneous fun _ device message => do
         let some device := device
           | throw (IO.userError s!"no device: {message}")
-        k wgpu adapter device
+        k wgpu adapter device timestamps
 
 /-- `bytes`, then `x`'s 32 bits as a float, little-endian, as WGSL's `f32`. -/
 def pushF32 (bytes : ByteArray) (x : Float) : ByteArray :=

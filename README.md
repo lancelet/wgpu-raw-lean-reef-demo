@@ -43,11 +43,14 @@ sun there (degrees round from the x axis, and up); `--wireframe on|off` and `--g
 on|off` say whether those show at the start; `--relief FACTOR` and
 `--ripples FACTOR` scale the floor's elevation and its ripples' height,
 1 as designed, 0 none; `--waves DEGREES` turns the waves the ripples lie
-across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
+across; `--wind SPEED` (metres a second) and `--depth METRES` set the
+sea that makes the caustics, and the water's depth; `--tile FILE` writes
+the ripples' tile as baked, a PPM image of
 its height and slopes (and its cavity, to a `-cavity` file beside it),
 for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
 normal, and brightness), and `--caustic-tile FILE` the caustics' first
-moment. How fast it draws, on the CPU and (where the
+moment, saying what sea the surface came to (its waves' height and
+slope). How fast it draws, on the CPU and (where the
 device can stamp time) on the GPU, and where the camera is, are in the
 bottom right; `reef --frames N` prints the last of that as it ends.
 

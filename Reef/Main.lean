@@ -78,11 +78,14 @@ def Options.initial (o : Options) (width height : UInt32) : App :=
   let floor : Floor := {}
   let ripples : Ripples := {}
   let sun : Sun := {}
+  let water : Water := {}
   { width, height, camera := o.camera'
     sun      := match o.sun with
       | some (azimuth, elevation) =>
         { azimuth := azimuth * 0.0174533, elevation := elevation * 0.0174533 }
       | none => sun
+    water    := { water with wind  := o.wind.getD water.wind
+                             depth := o.depth.getD water.depth }
     overlays := { wireframe := o.wireframe.getD overlays.wireframe
                   grid      := o.grid.getD overlays.grid }
     floor    := { floor with amplitude := o.relief.getD floor.amplitude }
@@ -117,6 +120,54 @@ def ppm (width height row : Nat) (pixels : ByteArray) : ByteArray := Id.run do
       let i := y * row + x * 4
       out := out.push pixels[i]! |>.push pixels[i + 1]! |>.push pixels[i + 2]!
   return out
+
+/-- `buffer`'s first `size` bytes, read back. -/
+def readbackBuffer (wgpu : Instance) (device : Device) (buffer : Buffer)
+    (size : UInt64) : IO ByteArray := do
+  let some copy ← device.createBuffer
+      { label := "readback", size, usage := .mapRead ||| .copyDst }
+    | throw (IO.userError "no buffer to read the buffer back into")
+  let encoder ← device.createCommandEncoder none
+  encoder.copyBufferToBuffer buffer 0 copy 0 size
+  (← device.getQueue).submit #[← encoder.finish none]
+  let status ← IO.mkRef none
+  let _ ← copy.mapAsync .read 0 size .allowProcessEvents fun s _ =>
+    status.set (some (s matches .ok .success))
+  for _ in [0:5000] do
+    if (← status.get).isSome then break
+    wgpu.processEvents
+    IO.sleep 1
+  unless (← status.get) == some true do
+    throw (IO.userError "the buffer was not read back")
+  copy.readMapped 0 size
+
+/-- The 32-bit float at byte `i` of `bytes`. -/
+def floatAt (bytes : ByteArray) (i : Nat) : Float :=
+  (Float32.ofBits (bytes[i]!.toUInt32 ||| (bytes[i + 1]!.toUInt32 <<< 8)
+    ||| (bytes[i + 2]!.toUInt32 <<< 16) ||| (bytes[i + 3]!.toUInt32 <<< 24))).toFloat
+
+/--
+Say what sea the surface is, from its last moment baked: the waves'
+height, as the significant wave height (four times the root mean square
+of the surface), the root mean square of its slope, and the steepest.
+-/
+def describeSea (wgpu : Instance) (device : Device) (c : Caustics) : IO Unit := do
+  let count := c.points * c.points
+  let bytes ← readbackBuffer wgpu device c.field (count * 16).toUInt64
+  let mut h2 := 0.0
+  let mut s2 := 0.0
+  let mut steepest := 0.0
+  for i in [0:count] do
+    let h := floatAt bytes (i * 16)
+    let sx := floatAt bytes (i * 16 + 4)
+    let sz := floatAt bytes (i * 16 + 8)
+    h2 := h2 + h * h
+    s2 := s2 + sx * sx + sz * sz
+    steepest := max steepest (sx * sx + sz * sz)
+  let n := count.toFloat
+  IO.println s!"The sea: waves {fixed (4 * (h2 / n).sqrt * 100) 0} cm high \
+    (significant), slope {fixed (s2 / n).sqrt 3} rms, \
+    {fixed steepest.sqrt 2} at steepest."
 
 /--
 The pixels of `texture`, `width` by `height`, four bytes each, read back:
@@ -216,6 +267,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     if let some path := options.causticTile then
       dumpTile wgpu device { renderer.caustics with sampler := renderer.grains.sampler
                              : Tile } app.water.texels path
+      describeSea wgpu device renderer.caustics
     if let some path := options.screenshot then
       screenshot wgpu device renderer app path
     return
@@ -293,7 +345,8 @@ open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
 [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR]
-[--waves DEGREES] [--tile FILE] [--grain-tile FILE] [--caustic-tile FILE]`. -/
+[--waves DEGREES] [--wind SPEED] [--depth METRES] [--tile FILE]
+[--grain-tile FILE] [--caustic-tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

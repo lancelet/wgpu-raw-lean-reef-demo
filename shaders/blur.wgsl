@@ -27,10 +27,10 @@ fn blurred(uv : vec2f, step : vec2f) -> vec4f {
 
 @fragment fn fs_x(in : Out) -> @location(0) vec4f {
   let size = vec2f(textureDimensions(source));
-  return blurred(in.position.xy / size, vec2f(1.0 / size.x, 0.0));
+  return blurred(in.position.xy / size, vec2f(1.5 / size.x, 0.0));
 }
 
 @fragment fn fs_y(in : Out) -> @location(0) vec4f {
   let size = vec2f(textureDimensions(source));
-  return blurred(in.position.xy / size, vec2f(0.0, 1.0 / size.y));
+  return blurred(in.position.xy / size, vec2f(0.0, 1.5 / size.y));
 }

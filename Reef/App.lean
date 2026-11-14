@@ -178,14 +178,15 @@ def Ripples.height (r : Ripples) : Float :=
 
 /-- The sun, as `shaders/sand.wgsl` lights by it: where it is in the sky.
 Under water the sun is never lower than about 41 degrees up, the surface
-bending even a setting sun that high; there by default, as low as it
-honestly can be, so that the ripples' shade shows (lower still is
-allowed, for the look). -/
+bending even a setting sun that high: 41 is a sun on the horizon. By
+default 55 degrees, a sun 40 degrees up in the air, mid-morning: in the
+sky through the window, and low enough that the ripples' shade shows
+(lower still is allowed, for the look). -/
 structure Sun where
   /-- Round from the x axis, in radians. -/
   azimuth   : Float := 0.36
   /-- Up from the horizon, in radians. -/
-  elevation : Float := 0.72
+  elevation : Float := 0.96
   deriving Repr, Inhabited
 
 /-- The direction the sun's light comes from: unit, up. -/
@@ -206,13 +207,13 @@ structure Water where
   /-- The surface's height above the floor's zero, in metres. -/
   depth      : Float := 4
   /-- How fast the water takes red, green and blue, per metre. -/
-  extinction : Vec3  := ⟨0.08, 0.04, 0.025⟩
+  extinction : Vec3  := ⟨0.1, 0.045, 0.025⟩
   /-- Its colour seen level, far off; up, toward the surface; down: a deep
   saturated teal, dark against the sand, as a photograph exposed for the
   sand has it. -/
-  horizon    : Vec3  := ⟨0.0, 0.11, 0.2⟩
-  zenith     : Vec3  := ⟨0.04, 0.32, 0.5⟩
-  deep       : Vec3  := ⟨0.0, 0.03, 0.12⟩
+  horizon    : Vec3  := ⟨0.0, 0.1, 0.23⟩
+  zenith     : Vec3  := ⟨0.04, 0.3, 0.55⟩
+  deep       : Vec3  := ⟨0.0, 0.03, 0.14⟩
   /-- The sun's light at the floor, warm, and the sky's from all above,
   dim and blue. -/
   sunlight   : Vec3  := ⟨1.7, 1.4, 1.0⟩
@@ -228,10 +229,10 @@ structure Water where
   and its direction, in radians from the x axis; how high the waves are,
   a factor; the shortest wave kept, in metres. -/
   tile          : Float := 8
-  wind          : Float := 3.5
+  wind          : Float := 3.9
   windDirection : Float := 0.5
   amplitude     : Float := 0.0004
-  shortest      : Float := 0.04
+  shortest      : Float := 0.03
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
   side; the grid of the surface drawn into each, quads a side, and its
@@ -245,6 +246,13 @@ structure Water where
   cells a side, and how far from the camera it reaches, in metres. -/
   surfaceGrid   : Nat   := 192
   surfaceReach  : Float := 400
+  /-- The light in the water (`shaders/shafts.wgsl`): the sun's light
+  scattered toward the camera by what the water holds, in shafts under
+  the surface's bright filaments: its strength, 0 none; the steps a pixel
+  marches its ray; and how far, in metres. -/
+  shafts        : Float := 1.5
+  shaftSteps    : Nat   := 24
+  shaftReach    : Float := 30
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

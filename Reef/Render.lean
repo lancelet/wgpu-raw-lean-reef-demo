@@ -144,8 +144,8 @@ tile's width, the relief, the speckle), the sun's direction, the camera's
 basis (with the tangents of half the view's width and height), the
 screen (its size, the time), and the water (the surface's height, the
 caustics' strength; the extinction; the colours; the caustics' loop; the
-surface's grid and reach, with the clip planes; the light in the water):
-416 bytes.
+surface's grid and reach, with the clip planes; the light in the water;
+the swell): 432 bytes.
 -/
 def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     (width height time : Float) (grid : Grid) (floor : Floor) (cells : Nat)
@@ -175,7 +175,8 @@ def frameBytes (viewProj : Mat4) (camera : Camera) (tanHalf aspect : Float)
     ++ v w.sunlight 1 ++ v w.skylight 1
     ++ [w.tile, w.loop, w.frames.toFloat, 0]
     ++ [w.surfaceGrid.toFloat, w.surfaceReach, near, far]
-    ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]).foldl
+    ++ [w.shafts, w.shaftSteps.toFloat, w.shaftReach, w.exposure]
+    ++ [w.swellHeight, w.swellPeriod, w.swellSpread, 0]).foldl
     pushF32 ByteArray.empty
 
 /-- The floor's quadtree, as `floor` says. -/

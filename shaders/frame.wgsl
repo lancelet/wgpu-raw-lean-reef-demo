@@ -1,5 +1,5 @@
 // The frame's uniforms, as every shader reads them, put before each
-// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 416 bytes.
+// (`Reef/Render.lean`): as `Reef.frameBytes` encodes them, 432 bytes.
 
 // Everything is drawn relative to the camera, which is at the origin of
 // `viewProj`; `camera` is where it is in the world, for what is a function
@@ -28,6 +28,7 @@ struct Frame {
   caustic  : vec4f,  // the caustics' loop: its tile, in metres; its length, in seconds; its moments, the layers; w unused
   surface  : vec4f,  // the surface's grid, cells a side, and its reach from the camera, in metres; the nearest and farthest the camera sees
   shaft    : vec4f,  // the light in the water: its strength; the steps a pixel marches; how far, in metres; and the frame's exposure (shaders/resolve.wgsl)
+  swell    : vec4f,  // the swell: its height, trough to crest, in metres; its period, in seconds; how far its waves' headings spread about the ripples', in radians; w unused
 }
 
 @group(0) @binding(0) var<uniform> frame : Frame;
@@ -49,8 +50,77 @@ const causticBrightest = 8.0;
 @group(0) @binding(7) var<storage, read> sea : array<vec4f>;
 const seaPoints = 256u;
 
-// The sea's surface at `xz`, in the world, between the grid's points:
-// its height, and its slope along x and z.
+// The swell at `xz`, in the world, at time `t`: what is left of the
+// ocean's long waves over the reef's crest, a slow heave of the surface
+// that the chop rides on. Three waves of periods that share no multiple,
+// headed a little apart about the waves' direction (the ripples'), each
+// swelling and fading over a minute or so out of step with the others,
+// so that sets come and go and nothing repeats; at the speed shallow
+// water gives a long wave, the square root of gravity times the depth.
+// The height, and the slope along x and z. (Not in the caustics: at this
+// depth a wave so long focuses nothing.)
+const tau = 6.283185307;
+const swellPeriods = array<f32, 3>(1.0, 1.21, 0.83);
+const swellShares = array<f32, 3>(0.5, 0.3, 0.2);
+const swellHeadings = array<f32, 3>(0.0, 1.0, -0.7);
+const swellPhases = array<f32, 3>(0.0, 2.1, 4.4);
+const swellSets = array<f32, 3>(73.0, 101.0, 59.0);
+const gravity = 9.81;
+
+fn swellWave(i : i32, xz : vec2f, t : f32) -> vec4f {
+  let depth = frame.water.x;
+  let dir = frame.ripple.xy;
+  let period = frame.swell.y * swellPeriods[i];
+  let omega = tau / period;
+  let k = omega / sqrt(gravity * depth);
+  // The set: the wave's amplitude swelling and fading, slowly.
+  let swelling = 0.7 + 0.3 * sin(t * tau / swellSets[i] + swellPhases[i] * 1.7);
+  let amplitude = frame.swell.x * 0.5 * swellShares[i] * swelling;
+  let angle = frame.swell.z * swellHeadings[i];
+  let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+                      dir.x * sin(angle) + dir.y * cos(angle));
+  let phase = k * dot(heading, xz) - omega * t + swellPhases[i];
+  return vec4f(amplitude, k, phase, 0.0);
+}
+
+fn swellAt(xz : vec2f, t : f32) -> vec3f {
+  var height = 0.0;
+  var slope = vec2f(0.0);
+  let dir = frame.ripple.xy;
+  for (var i = 0; i < 3; i++) {
+    let w = swellWave(i, xz, t);
+    let angle = frame.swell.z * swellHeadings[i];
+    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+                        dir.x * sin(angle) + dir.y * cos(angle));
+    height += w.x * sin(w.z);
+    slope += w.x * w.y * cos(w.z) * heading;
+  }
+  return vec3f(height, slope);
+}
+
+// The surge: the water's sway along the floor under the swell at `xz`,
+// at time `t`, in metres a second, for what lives there to follow: in
+// shallow water a wave's orbit flattens to a back-and-forth, its speed
+// the amplitude times the frequency over the wave number times the
+// depth.
+fn surgeAt(xz : vec2f, t : f32) -> vec2f {
+  var surge = vec2f(0.0);
+  let depth = frame.water.x;
+  let dir = frame.ripple.xy;
+  for (var i = 0; i < 3; i++) {
+    let w = swellWave(i, xz, t);
+    let angle = frame.swell.z * swellHeadings[i];
+    let heading = vec2f(dir.x * cos(angle) - dir.y * sin(angle),
+                        dir.x * sin(angle) + dir.y * cos(angle));
+    let omega = tau / (frame.swell.y * swellPeriods[i]);
+    surge += w.x * omega / (w.y * depth) * cos(w.z) * heading;
+  }
+  return surge;
+}
+
+// The sea's surface at `xz`, in the world, between the grid's points,
+// at this moment: its height, and its slope along x and z; the swell
+// under it.
 fn seaAt(xz : vec2f) -> vec3f {
   let uv = xz / frame.caustic.x * f32(seaPoints);
   let i = vec2i(floor(uv));
@@ -62,7 +132,8 @@ fn seaAt(xz : vec2f) -> vec3f {
   let f10 = sea[i00.y * seaPoints + i11.x].xyz;
   let f01 = sea[i11.y * seaPoints + i00.x].xyz;
   let f11 = sea[i11.y * seaPoints + i11.x].xyz;
-  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y);
+  return mix(mix(f00, f10, f.x), mix(f01, f11, f.x), f.y)
+    + swellAt(xz, frame.screen.z);
 }
 
 // The water, looking along `dir` (unit) into it with nothing in the

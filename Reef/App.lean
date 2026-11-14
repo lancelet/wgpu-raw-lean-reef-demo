@@ -256,6 +256,14 @@ structure Water where
   /-- The frame's exposure (`shaders/resolve.wgsl`): the light multiplied
   before the filmic curve. -/
   exposure      : Float := 0.7
+  /-- The swell (`shaders/frame.wgsl`): what is left of the ocean's long
+  waves over the reef's crest, a slow heave of the surface: its height,
+  trough to crest, in metres (10 to 30 cm in a lagoon); its period, in
+  seconds (8 to 14 off the ocean); how far its waves' headings spread
+  about the ripples', in radians. -/
+  swellHeight   : Float := 0.22
+  swellPeriod   : Float := 10
+  swellSpread   : Float := 0.25
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

@@ -118,10 +118,11 @@ structure Ripples where
   /-- The small ripples' height, riding on the ripples, as a fraction of
   theirs: 0 none. -/
   fine       : Float := 0.08
-  /-- The scour pits: how many a wavelength's square, 0 none to 1 one
-  each; and how deep, as a fraction of the ripples' height. -/
-  pits       : Float := 0.3
-  pitDepth   : Float := 0.5
+  /-- The scour pits: how many a wavelength's square where they run, 0
+  none to 1 one each; and how deep at most, as a fraction of the ripples'
+  height. -/
+  pits       : Float := 0.35
+  pitDepth   : Float := 0.4
   /-- The tile's texels a side: a power of two. -/
   texels     : Nat   := 2048
   /-- Ripples across the tile: even. -/

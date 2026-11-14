@@ -49,10 +49,14 @@ const kernelsPerCell = 8u;
 const bends = 4.0;
 // The small ripples: this many to one of the ripples.
 const fineRipples = 4.0;
-// A pit's half-width across the trough and along it, in wavelengths:
-// under 1, so that the cells around a point hold every pit reaching it.
-const pitAcross = 0.35;
-const pitAlong = 0.7;
+// A pit's half-width across the trough and along it, in wavelengths, at
+// its largest: under 1, so that the cells around a point hold every pit
+// reaching it.
+const pitAcross = 0.4;
+const pitAlong = 0.8;
+// The pits come in runs, where the water scours: this many across the
+// tile.
+const pitRuns = 6.0;
 // The small ripples come in patches: this many across the tile.
 const patches = 8.0;
 
@@ -206,25 +210,38 @@ fn rippleOf(s : vec3f) -> f32 {
 }
 
 // How much of a pit `p` is in, 0 none to 1 the bottom of one: pits are
-// scattered one to some of the wavelength's squares, each a bowl longer
-// along the troughs than across them.
+// scattered one to some of the wavelength's squares, in runs (a field
+// of noise says where they are many and where none), each a hollow
+// longer along the troughs than across them, of a size, depth and turn
+// of its own, steep on its upwave side (behind whatever the water
+// scoured it round) and tailing off down it, its rim soft.
 fn pitsAt(p : vec2f) -> f32 {
   let n = i32(bake.shape.x);
   let base = vec2i(floor(p * f32(n)));
+  let runs = smoothstep(-0.1, 0.5, noise(p * pitRuns + 47.0, i32(pitRuns)));
   var pit = 0.0;
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let cell = base + vec2i(i, j);
       let seed = cellSeed(cell, n, 0x5bd1e995u);
-      if (rand(seed, 0u) < bake.pits.x) {
-        let centre = (vec2f(cell) + vec2f(rand(seed, 1u), rand(seed, 2u))) / f32(n);
-        let d = (p - centre) * f32(n) / vec2f(pitAcross, pitAlong);
-        let q = dot(d, d);
-        pit += select(0.0, (1.0 - q) * (1.0 - q), q < 1.0);
-      }
+      let centre = (vec2f(cell) + vec2f(rand(seed, 1u), rand(seed, 2u))) / f32(n);
+      let there = smoothstep(-0.1, 0.5, noise(centre * pitRuns + 47.0, i32(pitRuns)));
+      if (rand(seed, 0u) >= bake.pits.x * there) { continue; }
+      let size = 0.5 + 0.5 * rand(seed, 3u);
+      let depth = 0.5 + 0.5 * rand(seed, 4u);
+      let turn = 0.3 * (rand(seed, 5u) - 0.5);
+      let along = vec2f(-sin(turn), cos(turn));
+      let d = (p - centre) * f32(n);
+      var e = vec2f(dot(d, vec2f(along.y, -along.x)), dot(d, along));
+      // Across the trough (x, up the waves), the upwave half squeezed
+      // and the downwave half drawn out.
+      e.x = e.x / select(1.4, 0.6, e.x < 0.0);
+      e = e / (vec2f(pitAcross, pitAlong) * size);
+      let q = dot(e, e);
+      pit += select(0.0, depth * smoothstep(1.0, 0.0, q), q < 1.0);
     }
   }
-  return min(pit, 1.0);
+  return min(pit, 1.0) * max(runs, 0.0);
 }
 
 // The height at `p`: the ripples', the small ripples' on them, in

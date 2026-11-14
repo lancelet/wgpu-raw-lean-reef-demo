@@ -226,8 +226,8 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   let near = 1.0 - smoothstep(6.0, 22.0, dist);
   // The sky the rock leaves it: per pixel near, the vertices' far off.
   var ao = in.ao;
-  if (dist < 25.0) {
-    ao = mix(rockOcclusion(world, geometric), ao, smoothstep(18.0, 25.0, dist));
+  if (dist < 12.0) {
+    ao = mix(rockOcclusion(world, geometric), ao, smoothstep(8.0, 12.0, dist));
   }
   // Three scales of noise over the rock, a couple of metres to a few
   // centimetres: where its covers lie, and the knobs of the coral heads.
@@ -253,7 +253,11 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   let tone = s1.x * wd.x + s1.y * wd.y + s1.z * wd.z;
   // Where it meets the sand: how high above the sand under it (the
   // seabed's, its moat and tails and all).
-  let above = world.y - height(world.xz);
+  // (The open floor's height and the seabed's map's, apart: the floor
+  // normal below takes its slope from them with two more of each.)
+  let floorOpen = baseHeight(world.xz);
+  let floorBed = seabedAt(world.xz);
+  let above = world.y - (floorOpen + floorBed.z);
   // Sand-blasted: a hand or two up from the sand the surge throws sand at
   // it, and it is worn pale and bare, nothing growing; ragged, higher where
   // the rock juts out.
@@ -325,7 +329,6 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   let gy = dpdy(world);
   // Its colour and its grains' size the floor's at the foot (the
   // seabed's map's moat and tails), so that the two are one sand.
-  let floorBed = seabedAt(world.xz);
   let sorting = sandSorting(floorBed);
   if (sand > 0.0) {
     var grain : vec4f;
@@ -344,7 +347,13 @@ fn detailPlanes(p : vec3f, fx : vec3f, fy : vec3f, w : vec3f, layer : i32) -> Pl
   // all, so the two meet with the same normal, so the same light), the
   // rock's own a hand up, blended smoothly between.
   if (seam > 0.0) {
-    let fs = floorSlope(world.xz, 0.04);
+    // (The seabed's map's slope, its lip and its moat, by forward
+    // differences a few centimetres along: texture reads. The open
+    // floor's own slope, gentle, a few degrees, is left out: its noise
+    // costs much, read so in every pixel of the seam.)
+    let e = 0.04;
+    let fs = vec2f(seabedAt(world.xz + vec2f(e, 0.0)).z - floorBed.z,
+                   seabedAt(world.xz + vec2f(0.0, e)).z - floorBed.z) / e;
     let floorNormal = normalize(vec3f(-fs.x, 1.0, -fs.y));
     let k = seam * seam * (3.0 - 2.0 * seam);
     n = normalize(mix(n, floorNormal, k));

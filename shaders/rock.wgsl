@@ -179,7 +179,7 @@ fn rockBandsForShading(p : vec3f, cell : f32, pixel : f32) -> vec4f {
   var h = vec4f(0.0);
   for (var i = 0; i < rockBandCount; i++) {
     let lambda = 1.0 / bandFrequency(i);
-    let seen = smoothstep(1.5 * pixel, 4.0 * pixel, lambda);
+    let seen = smoothstep(2.0 * pixel, 5.0 * pixel, lambda);
     if (seen <= 0.0) { break; }
     let w = (1.0 - meshHolds(lambda, cell)) * seen;
     if (w > 0.0) { h += w * rockBand(p, i); }

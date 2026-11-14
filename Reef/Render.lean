@@ -3,11 +3,15 @@ import Reef.Floor
 import Reef.Overlay
 import Reef.Grains
 import Reef.Ripples
+import Reef.Timing
 
 /-!
 # Drawing
 
-One render pass, with a depth buffer: the sand, the floor's quadtree
+One render pass, with a depth buffer, timed as a whole (on Metal a
+pass's own stamps overlap the next's, so passes cannot be told apart;
+what a thing costs is the difference with it off): the water behind,
+then the sand, the floor's quadtree
 (`Reef/Floor.lean`, `shaders/sand.wgsl`), the nodes chosen for the eye
 this frame, drawn at once, its ripples and its grains from their tiles
 (`Reef/Ripples.lean`, `Reef/Grains.lean`); over it, if shown, its wireframe
@@ -83,6 +87,10 @@ structure Renderer where
   depth    : IO.Ref (Option Depth)
   /-- The text over it all. -/
   overlay  : Overlay
+  /-- The frame's time on the GPU, if the device can stamp it. -/
+  timing   : Option Timing
+  /-- Frames drawn, for the timing's ring. -/
+  frames   : IO.Ref Nat
 
 /-- The camera's field of view, up and down, in radians: 60 degrees. -/
 def fovY : Float := 1.0472
@@ -179,10 +187,15 @@ def pipeline (device : Device) (label : String) (layout : PipelineLayout)
     }
   }
 
+/-- What is timed, in order: the one pass, the frame. -/
+def passes : Array String := #["frame"]
+
 /-- A renderer drawing into targets of `format`, the floor `floor`, its
-ripples `ripples` and its grains `grains` (baked here). -/
+ripples `ripples` and its grains `grains` (baked here); timing its passes
+if `timestamps`. -/
 def Renderer.create (device : Device) (format : TextureFormat)
-    (floor : Floor) (ripples : Ripples) (grains : Grains) : IO Renderer := do
+    (floor : Floor) (ripples : Ripples) (grains : Grains)
+    (timestamps : Bool := false) : IO Renderer := do
   -- One layout for every pipeline here: the frame's uniforms, the floor's
   -- nodes, and the tiles, so that one bind group serves them all (a
   -- pipeline's own layout is exclusive to it).
@@ -247,6 +260,8 @@ def Renderer.create (device : Device) (format : TextureFormat)
     drawn   := ← IO.mkRef 0
     depth   := ← IO.mkRef none
     overlay := ← Overlay.create device format depthFormat
+    timing  := ← Timing.create device timestamps passes.size
+    frames  := ← IO.mkRef 0
   }
 
 /-- The floor's mesh made again, for `floor` as it is now: its patch; the
@@ -312,6 +327,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
   let view ← texture.createView (some { format := r.format })
   let depth ← r.depthFor app.width app.height
   let encoder ← r.device.createCommandEncoder none
+  let n ← r.frames.get
   let pass ← encoder.beginRenderPass {
     colorAttachments := #[{
       view       := some view
@@ -325,6 +341,7 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
       depthStoreOp    := .discard
       depthClearValue := some 1
     }
+    timestampWrites := Timing.writesFor r.timing 0
   }
   pass.setBindGroup 0 (some r.data) #[]
   pass.setPipeline r.water
@@ -339,6 +356,18 @@ def Renderer.draw (r : Renderer) (app : App) (texture : Texture) :
     pass.draw 6 1 0 0
   r.overlay.draw pass app.width app.height
   pass.«end»
+  let timed ← match r.timing with
+    | some t => t.resolveInto encoder n
+    | none => pure false
   r.queue.submit #[← encoder.finish none]
+  if timed then
+    if let some t := r.timing then t.collect n
+  r.frames.set (n + 1)
+
+/-- The latest frame's passes' times on the GPU, in nanoseconds, if any. -/
+def Renderer.gpuTimes (r : Renderer) : IO (Option (Array Nat)) :=
+  match r.timing with
+  | some t => t.latest.get
+  | none => pure none
 
 end Reef

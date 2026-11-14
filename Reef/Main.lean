@@ -197,7 +197,7 @@ def dumpTile (wgpu : Instance) (device : Device) (tile : Tile)
 
 /-- The window, the surface, and the frames, on `device`. -/
 def start (options : Options) (wgpu : Instance) (adapter : Adapter)
-    (device : Device) : IO Unit := do
+    (device : Device) (timestamps : Bool) : IO Unit := do
   let window ← options.window 960 540
   if options.screenshot.isSome || options.tile.isSome
       || options.grainTile.isSome then
@@ -226,7 +226,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
-    initial.ripples initial.grains
+    initial.ripples initial.grains timestamps
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
@@ -272,6 +272,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     | some status =>
       throw (IO.userError s!"no texture to draw in: {repr status}")
     let (next, text) := (← stats.get).frame (← IO.monoNanosNow) (← busy.get)
+      passes (← renderer.gpuTimes)
     stats.set next
     if let some text := text then summary.set text
     let shown ← app.get
@@ -280,7 +281,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       (textSize shown.height)
     let n ← drawn.get
     if options.frames == some n then
-      IO.println s!"Drew {n} frames."
+      IO.println s!"Drew {n} frames.\n{← summary.get}"
     return options.frames.all (n < ·)
 
 end Reef

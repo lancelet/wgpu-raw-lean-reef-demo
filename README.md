@@ -46,8 +46,9 @@ on|off` say whether those show at the start; `--relief FACTOR` and
 across; `--tile FILE` writes the ripples' tile as baked, a PPM image of
 its height and slopes (and its cavity, to a `-cavity` file beside it),
 for looking at the bake, and `--grain-tile FILE` the grains' likewise (a
-normal, and brightness). How fast it draws, and where the camera is, are
-in the bottom right.
+normal, and brightness). How fast it draws, on the CPU and (where the
+device can stamp time) on the GPU, and where the camera is, are in the
+bottom right; `reef --frames N` prints the last of that as it ends.
 
 The camera is driven as a modelling program's viewport, with no modes: two
 fingers on a trackpad (or the wheel) orbit the point it looks at; with
@@ -122,6 +123,7 @@ and `Reef/Main.lean`, and the bindings' web/README.md).
   which any mesh gets.
 - `Reef/Overlay.lean`: text over the frame, drawn as pixels.
 - `Reef/Stats.lean`: how fast it draws, for the overlay.
+- `Reef/Timing.lean`: the frame's time on the GPU, by timestamps.
 - `Reef/Main.lean`: the program: the shell around the state.
 - `shaders/`: the WGSL. The build writes it into `Reef/Shaders.lean`, so
   it is embedded in the program, and an edited shader is built in. That file

@@ -18,7 +18,7 @@ struct Frame {
   up       : vec4f,  // the camera's up, and the tangent of half the view's height
   forward  : vec4f,  // the camera's forward; w unused
   screen   : vec4f,  // the target's width and height, in pixels; the time, in seconds; w unused
-  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' cell, in metres, and their strength; w unused
+  water    : vec4f,  // the surface's height above the floor's zero, in metres; the caustics' cell, in metres, their strength, and the waves' speed, in metres a second
   extinct  : vec4f,  // how fast the water takes each colour, per metre; w unused
   horizon  : vec4f,  // the water's colour seen level, far off
   zenith   : vec4f,  // ... seen up, toward the surface
@@ -119,13 +119,20 @@ fn floorSlope(xz : vec2f, e : f32) -> vec2f {
 // here and spread there: the caustics at `p` on the surface (the world's
 // xz), about 1 on the mean, more on the bright webs, less between. Two
 // fields of noise drifting over each other, each bright along its zero
-// crossings, which are a web of lines a cell or so apart. Blurred away
-// where a cell is under a pixel's footprint `foot`.
+// crossings, which are a web of lines a cell or so apart; the one
+// running with the waves at their speed (the chop that focuses the
+// light moves at its phase speed, about a metre a second), the other
+// slower and across it, so that the web reshapes once or twice a second
+// as the two cross. Blurred away where a cell is under a pixel's
+// footprint `foot`.
 fn caustics(p : vec2f, foot : f32) -> f32 {
   let cell = frame.water.y;
+  let speed = frame.water.w;
   let t = frame.screen.z;
-  let a = noise(p / cell + vec2f(0.11, 0.07) * t);
-  let b = noise(p / (cell * 1.37) + 7.0 + vec2f(-0.06, 0.12) * t);
+  let dir = frame.ripple.xy;
+  let across = vec2f(-dir.y, dir.x);
+  let a = noise((p - dir * speed * t) / cell);
+  let b = noise((p - (dir * 0.35 + across * 0.5) * speed * t) / (cell * 1.37) + 7.0);
   let web = pow(1.0 - min(abs(a) * 1.6, 1.0), 5.0) + pow(1.0 - min(abs(b) * 1.6, 1.0), 5.0);
   let sharp = 1.0 - smoothstep(cell * 0.3, cell * 1.5, foot);
   return 1.0 + frame.water.z * sharp * (web * 1.6 - 0.45);

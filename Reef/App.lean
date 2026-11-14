@@ -111,6 +111,16 @@ structure Ripples where
   disorder   : Float := 0
   /-- The crests' sharpness: a power, under 1 sharp. -/
   sharpness  : Float := 0.6
+  /-- How much of the wavelength the gentle rise to a crest takes, the
+  steep fall down its lee the rest: 0.5 symmetric. -/
+  asymmetry  : Float := 0.65
+  /-- The small ripples' height, riding on the ripples, as a fraction of
+  theirs: 0 none. -/
+  fine       : Float := 0.08
+  /-- The scour pits: how many a wavelength's square, 0 none to 1 one
+  each; and how deep, as a fraction of the ripples' height. -/
+  pits       : Float := 0.3
+  pitDepth   : Float := 0.5
   /-- The tile's texels a side: a power of two. -/
   texels     : Nat   := 2048
   /-- Ripples across the tile: even. -/
@@ -128,9 +138,11 @@ structure Ripples where
 /-- The tile's width, in metres. -/
 def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
 
-/-- Trough to crest, in metres. -/
+/-- The tile's height from its lowest to its highest, in metres: the
+ripples' trough to crest (the steepness of the wavelength), and the small
+ripples' and the pits' on top, as the bake sums them. -/
 def Ripples.height (r : Ripples) : Float :=
-  r.steepness * r.wavelength * r.amplitude
+  r.steepness * r.wavelength * r.amplitude * (1 + r.fine + r.pitDepth)
 
 /-- What is shown of the scene besides itself: the development overlays. -/
 structure Overlays where

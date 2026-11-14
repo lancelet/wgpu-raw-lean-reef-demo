@@ -35,10 +35,11 @@ slopes and a cavity, and what every device filters and draws into. -/
 def tileFormat : TextureFormat := .rgba8Unorm
 
 /-- The bake's uniforms, as `shaders/ripples.wgsl` lays out `Bake`:
-32 bytes. -/
+48 bytes. -/
 def bakeBytes (r : Ripples) : ByteArray :=
   [r.perTile.toFloat, r.spread, r.disorder, r.sharpness,
-   r.steepness, r.texels.toFloat, 0, 0].foldl pushF32 ByteArray.empty
+   r.steepness, r.texels.toFloat, r.asymmetry, r.fine,
+   r.pits, r.pitDepth, 0, 0].foldl pushF32 ByteArray.empty
 
 /-- A pipeline drawing one triangle with `module`'s `vs` and `fragment`
 into a `tileFormat` target, with no depth. -/

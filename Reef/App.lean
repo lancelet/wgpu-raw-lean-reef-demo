@@ -248,7 +248,7 @@ structure Water where
   tile          : Float := 8
   wind          : Float := 4.0
   windDirection : Float := 0.5
-  amplitude     : Float := 0.0003
+  amplitude     : Float := 0.0006
   shortest      : Float := 0.12
   /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
   and its moments, baked as the layers of a texture this many texels a
@@ -283,6 +283,10 @@ structure Water where
   swellHeight   : Float := 0.5
   swellPeriod   : Float := 3.5
   swellSpread   : Float := 0.25
+  /-- The bubbles (`Reef/Bubbles.lean`): how many, and how far from the
+  camera they are kept, in metres. -/
+  bubbles       : Nat   := 6000
+  bubbleReach   : Float := 12
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/

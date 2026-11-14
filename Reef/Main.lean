@@ -31,6 +31,10 @@ def textSize (height : UInt32) : UInt32 := max 16 (height / 54)
 /-- The longest a frame counts as, in seconds: after a pause, no leap. -/
 def longestStep : Float := 0.1
 
+/-- Frames drawn before a screenshot's, at sixty a second, for what
+evolves: three seconds. -/
+def warmFrames : Nat := 180
+
 /-- A screenshot's texture format: as a surface's, sRGB. -/
 def screenshotFormat : TextureFormat := .rgba8UnormSrgb
 
@@ -212,9 +216,13 @@ def screenshot (wgpu : Instance) (device : Device) (renderer : Renderer)
     size   := { width, height }
     format := screenshotFormat
   }
-  -- Twice: the overlay too, with the camera's line and the patches the
-  -- first frame drew, how the text looks.
-  renderer.draw app texture
+  -- Some seconds of frames first, for what evolves (the bubbles rise,
+  -- the caustics' loop and the swell are at the moment): then the overlay
+  -- too, with the camera's line and the patches drawn, how the text
+  -- looks.
+  for i in [0:warmFrames] do
+    renderer.draw { app with time := app.time + i.toFloat / 60 } texture
+  let app := { app with time := app.time + warmFrames.toFloat / 60 }
   renderer.overlay.show s!"{describe app}  patches {← renderer.drawn.get}"
     (textSize height)
   renderer.draw app texture

@@ -72,7 +72,11 @@ fn waveVector(c : vec2u) -> vec2f {
 
 // How high the waves of wave vector `k` are, squared, by Phillips's
 // spectrum: most in the wind's direction, at lengths about the wind
-// makes, none the shortest.
+// makes, none the shortest; and none the longest either, over a couple
+// of metres, which the tile is too small to hold honestly and which the
+// swell carries instead (shaders/frame.wgsl): this sea is the chop, the
+// texture on the surface, and the swell is its shape.
+const longest = 2.0;
 fn phillips(k : vec2f) -> f32 {
   let kLen = length(k);
   if (kLen < 1e-4) { return 0.0; }
@@ -81,8 +85,10 @@ fn phillips(k : vec2f) -> f32 {
   let along = dot(k / kLen, wind);
   let kL = kLen * L;
   let shortest = sea.shortest;
+  let kLong = kLen * longest / tau;
+  let notLong = 1.0 - exp(-2.0 * kLong * kLong);
   return sea.amplitude * exp(-1.0 / (kL * kL)) / (kLen * kLen * kLen * kLen)
-    * along * along * exp(-kLen * kLen * shortest * shortest);
+    * along * along * exp(-kLen * kLen * shortest * shortest) * notLong;
 }
 
 // The wave of cell `c` at time 0: its amplitude and phase, complex.

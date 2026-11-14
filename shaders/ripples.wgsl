@@ -35,7 +35,9 @@ struct Bake {
   // fraction of the ripples'.
   size  : vec4f,
   // The pits: how many a wavelength's square (0 to 1); their depth, as a
-  // fraction of the ripples' height; z, w unused.
+  // fraction of the ripples' height. The slip faces: the slope of sand
+  // at rest (the tangent of its angle of repose); how much of the field
+  // has them, 0 none to 1 all.
   pits  : vec4f,
 }
 
@@ -184,17 +186,40 @@ fn symmetric(phi : f32) -> f32 {
   return 1.0 - (pow((1.0 - cos(phi)) * 0.5 + rounding, p) - lo) / (hi - lo);
 }
 
+// The lee of a ripple with a slip face, `t` of the wavelength from the
+// crest, the fall taking `fall` of it: sand carried over the brink comes
+// to rest at its angle of repose, a straight face from the brink down,
+// then runs out in a concave toe to the trough (a cubic, meeting the
+// face's slope and the trough's flat).
+fn slipFace(t : f32, fall : f32) -> f32 {
+  // The face's slope, in heights a wavelength: the sand's over the
+  // ripples' steepness; three quarters of the way down on it.
+  let slope = bake.pits.z / bake.size.x;
+  let toeAt = min(0.75 / slope, fall * 0.6);
+  let toeHeight = 1.0 - slope * toeAt;
+  if (t < toeAt) { return 1.0 - slope * t; }
+  let u = (t - toeAt) / (fall - toeAt);
+  let u2 = u * u;
+  let u3 = u2 * u;
+  // Hermite: from toeHeight, sloping as the face, to 0, flat.
+  let startSlope = -slope * (fall - toeAt);
+  return max(toeHeight * (2.0 * u3 - 3.0 * u2 + 1.0) + startSlope * (u3 - 2.0 * u2 + u), 0.0);
+}
+
 // The height for a phase: the symmetric profile's, with the cycle
 // warped so that the fall from the crest down its lee (the phase runs
 // along the waves) takes the short part of the wavelength and the rise
 // up the next the long part. The trough, where the symmetric profile is
 // flat, stays smooth across the warp's kink; the crest is a kink anyway.
-fn profile(phi : f32) -> f32 {
+// The lee is a slip face by `slip`, 0 the rounded fall to 1 the face.
+fn profile(phi : f32, slip : f32) -> f32 {
   let rise = bake.size.z;
   let fall = 1.0 - rise;
   let t = fract(phi / tau);
   let warped = select(0.5 + 0.5 * (t - fall) / rise, 0.5 * t / fall, t < fall);
-  return symmetric(tau * warped);
+  let rounded = symmetric(tau * warped);
+  if (t >= fall || slip <= 0.0) { return rounded; }
+  return mix(rounded, slipFace(t, fall), slip);
 }
 
 // The ripples' height from the kernels' sum `s`: the profile of the
@@ -203,10 +228,19 @@ fn profile(phi : f32) -> f32 {
 // alone would jump there, a cliff. Not to nothing: a quarter of the
 // height stays, faint ripples rather than a flat, and where the phase
 // does jump, a step a quarter the size.
-fn rippleOf(s : vec3f) -> f32 {
+fn rippleOf(s : vec3f, slip : f32) -> f32 {
   let agreement = length(s.xy) / s.z;
   let taper = mix(0.25, 1.0, smoothstep(0.02, 0.15, agreement));
-  return mix(0.5, profile(atan2(s.y, s.x)), taper);
+  return mix(0.5, profile(atan2(s.y, s.x), slip), taper);
+}
+
+// How far the ripples at `p` have slip faces, 0 none to 1 wholly: in
+// stretches, where the ripples are active, a field of noise says; this
+// many across the tile.
+const slipStretches = 5.0;
+fn slipAt(p : vec2f) -> f32 {
+  let field = noise(p * slipStretches + 23.0, i32(slipStretches));
+  return bake.pits.w * smoothstep(-0.3, 0.3, field + (bake.pits.w - 0.5) * 0.6);
 }
 
 // How much of a pit `p` is in, 0 none to 1 the bottom of one: pits are
@@ -251,9 +285,9 @@ fn pitsAt(p : vec2f) -> f32 {
 fn heightOf(p : vec2f) -> f32 {
   let fine = bake.size.w;
   let depth = bake.pits.y;
-  let ripples = rippleOf(phasor(p, 1.0));
+  let ripples = rippleOf(phasor(p, 1.0), slipAt(p));
   let patchy = smoothstep(-0.2, 0.5, noise(p * patches + 31.0, i32(patches)));
-  let small = mix(0.5, rippleOf(phasor(p, fineRipples)), patchy);
+  let small = mix(0.5, rippleOf(phasor(p, fineRipples), 0.0), patchy);
   let pit = pitsAt(p) * (1.0 - ripples);
   return (ripples + fine * small + depth * (1.0 - pit)) / (1.0 + fine + depth);
 }

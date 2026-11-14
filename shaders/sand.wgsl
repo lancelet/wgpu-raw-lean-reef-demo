@@ -227,8 +227,11 @@ fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
   // darker for it.
   let sorted = mix(1.35, 0.8, tile.r);
   // What lives in the sand digs where the sand is still: in the ripples'
-  // troughs, not on their crests, which the water sweeps.
-  let still = 1.0 - smoothstep(0.3, 0.7, tile.r);
+  // troughs, not on their crests, which the water sweeps; and in
+  // colonies, patches a few ripples across with bare sand between (a
+  // field of noise over the world, half a metre a feature).
+  let colonies = smoothstep(0.05, 0.4, noise(world.xz / 0.5 + 77.0));
+  let still = (1.0 - smoothstep(0.2, 0.55, tile.r)) * colonies;
   let grain = grainsAt(world.xz, footAlong, footAcross, sorted, still);
   let tilt = grain.xyz;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);

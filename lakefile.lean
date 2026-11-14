@@ -123,11 +123,12 @@ lean_lib Reef where
 
 /--
 The demo: `lake exe reef [--frames N] [--windowed] [--headless]
-[--screenshot FILE]`. With `--frames N`, it ends after `N` frames; with
-`--windowed`, it draws in a window rather than filling the screen; with
-`--headless`, it draws with no display, as on macOS's CI runners (macOS
-only); with `--screenshot FILE`, it draws one frame into that file, a PPM
-image, and ends.
+[--screenshot FILE] [--camera X,Y,Z,YAW,PITCH]`. With `--frames N`, it ends
+after `N` frames; with `--windowed`, it draws in a window rather than
+filling the screen; with `--headless`, it draws with no display, as on
+macOS's CI runners (macOS only); with `--screenshot FILE`, it draws one
+frame into that file, a PPM image, and ends; with `--camera`, the camera
+starts there.
 -/
 @[default_target]
 lean_exe reef where

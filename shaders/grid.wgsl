@@ -1,31 +1,24 @@
-// The floor: a square at height 0, as far as the grid's extent, with a grid
+// The grid: a square at the world's height 0, as far as the grid's extent, with a grid
 // of lines on it, a line every spacing and a brighter one every major
-// lines, the x and z axes in colour, fading into the background with
-// distance from the camera. Drawn as two triangles; the lines are found in
-// the fragment shader, a pixel wide whatever the distance.
-
-// As `Reef.frameBytes` encodes it: 96 bytes.
-struct Frame {
-  viewProj : mat4x4f,
-  camera   : vec4f,  // where the camera is; w unused
-  grid     : vec4f,  // spacing, major, extent, fade
-}
-
-@group(0) @binding(0) var<uniform> frame : Frame;
+// lines, the x and z axes in colour, fading with distance from the camera.
+// Drawn as two triangles over the floor, the lines found in the fragment
+// shader, a pixel wide whatever the distance, and blended over by their
+// coverage: nothing but the lines shows.
 
 struct Out {
   @builtin(position) position : vec4f,
-  @location(0)       world    : vec3f,
+  @location(0)       relative : vec3f,  // to the camera
 }
 
+// The square around the camera, at the world's height 0.
 @vertex fn vs(@builtin(vertex_index) i : u32) -> Out {
   var corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
     vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0));
   let c = corners[i] * frame.grid.z;
   var out : Out;
-  out.world = vec3f(c.x, 0.0, c.y);
-  out.position = frame.viewProj * vec4f(out.world, 1.0);
+  out.relative = vec3f(c.x, -frame.camera.y, c.y);
+  out.position = frame.viewProj * vec4f(out.relative, 1.0);
   return out;
 }
 
@@ -44,17 +37,18 @@ fn axis(x : f32) -> f32 {
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
-  let p = in.world.xz / frame.grid.x;
+  let world = toWorld(in.relative);
+  let p = world.xz / frame.grid.x;
   let minor = line(p);
   let major = line(p / frame.grid.y);
-  let background = vec3f(0.02, 0.05, 0.09);
-  var color = vec3f(0.05, 0.08, 0.11);
-  color = mix(color, vec3f(0.22, 0.30, 0.38), minor * 0.7);
+  let x = axis(world.z);
+  let z = axis(world.x);
+  var color = vec3f(0.22, 0.30, 0.38);
   color = mix(color, vec3f(0.45, 0.60, 0.70), major);
   // The axes: x in red, z in blue.
-  color = mix(color, vec3f(0.9, 0.3, 0.3), axis(in.world.z));
-  color = mix(color, vec3f(0.3, 0.5, 1.0), axis(in.world.x));
-  let dist = length(in.world - frame.camera.xyz);
-  let fade = exp(-dist / frame.grid.w);
-  return vec4f(mix(background, color, fade), 1.0);
+  color = mix(color, vec3f(0.9, 0.3, 0.3), x);
+  color = mix(color, vec3f(0.3, 0.5, 1.0), z);
+  let coverage = max(max(minor * 0.7, major), max(x, z));
+  let fade = visible(length(in.relative));
+  return vec4f(color, coverage * fade);
 }

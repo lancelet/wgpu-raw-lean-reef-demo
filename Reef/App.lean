@@ -17,8 +17,9 @@ As a modelling program's viewport, with no modes: two fingers on a trackpad
 browser), dolly; with Alt, turn in place. The main mouse button, dragged,
 does the same four. W, A, S, D (or the arrows) move the camera, and its
 target with it, Q and E down and up, Shift hurrying. Home puts the camera
-back where it started; F fills the screen, or leaves it; Escape ends the
-demo, natively.
+back where it started; 1 shows the wireframe, or hides it, and 2 the grid;
+`[` and `]` halve and double the detail, how finely every mesh is made;
+F fills the screen, or leaves it; Escape ends the demo, natively.
 -/
 
 open WebGPU.Window
@@ -48,28 +49,165 @@ structure Grid where
   fade    : Float := 60
   deriving Repr, Inhabited
 
+/--
+How finely every mesh is made, as a factor: 1 as designed, 2 twice as
+fine, and so on; the one knob for the hardware at hand. Each mesh scales
+its own tessellation by it (`Floor.cellsAt`); the renderer makes the meshes
+again when it changes (`Command.remesh`).
+-/
+def Detail := Float
+
+/-- The floor's quadtree (`Reef/Floor.lean`), as `shaders/sand.wgsl` reads it. -/
+structure Floor where
+  /-- A leaf patch's width, in metres. -/
+  leaf      : Float := 0.4
+  /-- Cells a side of a patch at detail 1: even. -/
+  cells     : Nat   := 32
+  /-- Levels above the leaves: the root is `leaf * 2 ^ depth` wide, around
+  the eye. -/
+  depth     : Nat   := 12
+  /-- How far from the eye the leaves are drawn, in metres: each level up,
+  twice as far. -/
+  range     : Float := 1.5
+  /-- Where a node begins to morph onto its parent: this fraction of its
+  level's range out. -/
+  morph     : Float := 0.7
+  /-- The large-scale elevation's amplitude, as a factor of the height
+  function's (`shaders/frame.wgsl`): 1 as designed. -/
+  amplitude : Float := 1
+  deriving Repr, Inhabited
+
+/-- How far above and below 0 the floor may reach, for culling: the
+height's octaves' amplitudes summed, and some. -/
+def Floor.relief (f : Floor) : Float := 1.2 * f.amplitude
+
+/-- Cells a side of a patch at `detail`: scaled, even, at least 4. A leaf
+stays the width it is; its cells get finer. -/
+def Floor.cellsAt (f : Floor) (detail : Float) : Nat :=
+  max 4 ((f.cells.toFloat * detail / 2).round.toUInt64.toNat * 2)
+
+/--
+The sand's wave ripples, as `shaders/sand.wgsl` draws them from the tile
+`Reef/Ripples.lean` bakes (`shaders/ripples.wgsl`). The spacing and the
+steepness are those of orbital ripples a few metres down (Wiberg and
+Harris, 1994): the wavelength about 0.6 of the waves' orbital diameter at
+the bed, the height about a seventh of the wavelength.
+-/
+structure Ripples where
+  /-- Which way the waves run, in radians from the x axis; the crests lie
+  across it. -/
+  direction  : Float := 0.5
+  /-- Crest to crest, in metres. -/
+  wavelength : Float := 0.18
+  /-- Trough to crest, as a fraction of the wavelength. -/
+  steepness  : Float := 0.14
+  /-- A factor on the height: 1 as designed, 0 none. -/
+  amplitude  : Float := 1
+  /-- How far the ripples' direction strays from the waves', in radians,
+  here and there: more, and they bend and fork more. -/
+  spread     : Float := 0.3
+  /-- How far out of step the ripples' kernels are, 0 not at all, 1
+  wholly: a little breaks the crests up. -/
+  disorder   : Float := 0
+  /-- The crests' sharpness: a power, under 1 sharp. -/
+  sharpness  : Float := 0.5
+  /-- How much of the wavelength the gentle rise to a crest takes, the
+  steep fall down its lee the rest: 0.5 symmetric. -/
+  asymmetry  : Float := 0.65
+  /-- The small ripples' height, riding on the ripples, as a fraction of
+  theirs: 0 none. -/
+  fine       : Float := 0.08
+  /-- The scour pits: how many a wavelength's square, 0 none to 1 one
+  each; and how deep, as a fraction of the ripples' height. -/
+  pits       : Float := 0.3
+  pitDepth   : Float := 0.5
+  /-- The tile's texels a side: a power of two. -/
+  texels     : Nat   := 2048
+  /-- Ripples across the tile: even. -/
+  perTile    : Nat   := 32
+  /-- Within this distance of the eye, in metres, the ripples lift the
+  mesh itself (as far as its cells can carry them); beyond the next, the
+  normal map alone carries them. -/
+  fadeFrom   : Float := 8
+  fadeTo     : Float := 16
+  /-- How much the troughs darken, for the sky they cannot see: 0 not at
+  all, 1 as the tile says. -/
+  cavity     : Float := 0.5
+  deriving Repr, Inhabited
+
+/-- The tile's width, in metres. -/
+def Ripples.tile (r : Ripples) : Float := r.perTile.toFloat * r.wavelength
+
+/--
+The sand's grains, as `shaders/sand.wgsl` draws them from the tile
+`Reef/Grains.lean` bakes (`shaders/grains.wgsl`): medium sand, with
+fragments of shell and the like among the grains.
+-/
+structure Grains where
+  /-- The tile's width, in metres: a few centimetres, the grains within
+  having no pattern to show its repeating. -/
+  tile      : Float := 0.04
+  /-- The tile's texels a side: a power of two. -/
+  texels    : Nat   := 1024
+  /-- A grain's diameter, in metres. -/
+  grain     : Float := 0.0004
+  /-- A fragment's diameter, in metres, and how many of the fragments'
+  cells (a diameter wide) hold one, 0 none to 1 all. -/
+  fragment  : Float := 0.002
+  fragments : Float := 0.08
+  /-- How much the grains tilt the normal, and speckle the colour: 1 as
+  designed, 0 none. -/
+  relief    : Float := 1
+  speckle   : Float := 1
+  deriving Repr, Inhabited
+
+/-- The tile's height from its lowest to its highest, in metres: the
+ripples' trough to crest (the steepness of the wavelength), and the small
+ripples' and the pits' on top, as the bake sums them. -/
+def Ripples.height (r : Ripples) : Float :=
+  r.steepness * r.wavelength * r.amplitude * (1 + r.fine + r.pitDepth)
+
+/-- What is shown of the scene besides itself: the development overlays. -/
+structure Overlays where
+  /-- Every mesh's edges, as lines over it. -/
+  wireframe : Bool := true
+  /-- The grid, a line a metre at the floor's height. -/
+  grid      : Bool := false
+  deriving Repr, Inhabited
+
 /-- What `update` asks the program to do, which it cannot itself. -/
 inductive Command where
   | toggleFullscreen
   /-- The window was resized: configure the surface again. -/
   | reconfigure
+  /-- The detail changed: make the meshes again. -/
+  | remesh
   deriving Repr
 
 structure App where
-  camera   : Camera := Camera.initial
-  held     : Held   := {}
-  grid     : Grid   := {}
+  camera   : Camera        := Camera.initial
+  held     : Held          := {}
+  grid     : Grid          := {}
+  floor    : Floor         := {}
+  ripples  : Ripples       := {}
+  grains   : Grains        := {}
+  detail   : Float         := 1
+  overlays : Overlays      := {}
   /-- The mouse's place, in the window's units, and whether the main button
   is down. -/
   mouse    : Float × Float := (0, 0)
-  dragging : Bool := false
+  dragging : Bool          := false
   /-- The window's size in pixels. -/
   width    : UInt32
   height   : UInt32
   /-- The last frame's time, in seconds. -/
-  time     : Float := 0
-  quit     : Bool := false
+  time     : Float         := 0
+  quit     : Bool          := false
   deriving Repr, Inhabited
+
+/-- The floor as its mesh is made: its cells at the detail. -/
+def App.floorMesh (a : App) : Floor :=
+  { a.floor with cells := a.floor.cellsAt a.detail }
 
 /--
 How much a wheel event is: a browser's units are pixels, SDL's tenths of
@@ -153,6 +291,13 @@ def update (event : Event) (a : App) : App × List Command :=
     else if code == keyOf 'f' then (a, [.toggleFullscreen])
     else if code == Key.escape && !onWeb then ({ a with quit := true }, [])
     else if code == Key.home then ({ a with camera := Camera.initial }, [])
+    else if code == keyOf '1' then
+      ({ a with overlays.wireframe := !a.overlays.wireframe }, [])
+    else if code == keyOf '2' then ({ a with overlays.grid := !a.overlays.grid }, [])
+    else if code == keyOf '[' then
+      ({ a with detail := max 0.25 (a.detail / 2) }, [.remesh])
+    else if code == keyOf ']' then
+      ({ a with detail := min 4 (a.detail * 2) }, [.remesh])
     else (a, [])
 
 /-- The state `dt` seconds on: the camera moved by the keys held. -/

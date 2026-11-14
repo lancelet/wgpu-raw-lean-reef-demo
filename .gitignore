@@ -1,2 +1,4 @@
 .lake/
 .claude/settings.local.json
+references/
+concept/

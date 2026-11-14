@@ -140,7 +140,10 @@ fn cornerOffset(corner : vec2f) -> vec2f {
 
 // The grains' tile at `xz`, in the world, read through the grid of
 // triangles, for a pixel whose footprint is `along` and `across`: the
-// normal (as the tile holds it) and the brightness.
+// normal, not unit (shorter where the filtering has averaged it), and
+// the brightness. The tilt and the brightness are scaled back up to the
+// tile's contrast; the normal's height is the plain blend, as its
+// length is what is wanted of it.
 fn grainsAt(xz : vec2f, along : vec2f, across : vec2f) -> vec4f {
   let uv = xz / frame.grain.x;
   let corners = triangleAt(uv);
@@ -153,7 +156,23 @@ fn grainsAt(xz : vec2f, along : vec2f, across : vec2f) -> vec4f {
     sum += corner.z * (read - 0.5);
     weights += corner.z * corner.z;
   }
-  return sum / sqrt(weights) + 0.5;
+  let scaled = sum / sqrt(weights);
+  return vec4f(scaled.x * 2.0, sum.y * 2.0, scaled.z * 2.0, scaled.w + 0.5);
+}
+
+// Oren and Nayar's diffuse lighting of a rough surface, `sigma2` the
+// square of its roughness (the spread of its facets, in radians), with
+// normal `n`, lit from `l`, seen from `v`: like Lambert's, but a rough
+// surface shows the same from every angle when lit from behind the
+// viewer, and darkens toward the light, as sand does.
+fn roughDiffuse(n : vec3f, l : vec3f, v : vec3f, sigma2 : f32) -> f32 {
+  let nl = max(dot(n, l), 0.0);
+  let nv = max(dot(n, v), 0.0);
+  let a = 1.0 - 0.5 * sigma2 / (sigma2 + 0.33);
+  let b = 0.45 * sigma2 / (sigma2 + 0.09);
+  let s = dot(l, v) - nl * nv;
+  let t = select(1.0, max(nl, nv), s > 0.0);
+  return nl * (a + b * s / max(t, 1e-4));
 }
 
 @fragment fn fs(in : Out) -> @location(0) vec4f {
@@ -188,16 +207,31 @@ fn grainsAt(xz : vec2f, along : vec2f, across : vec2f) -> vec4f {
   // to flat, and shorter (the roughness they leave, Toksvig's measure,
   // for the lighting to come), so the tilt fades out of its own accord.
   let grain = grainsAt(world.xz, footAlong, footAcross);
-  let tilt = grain.rgb * 2.0 - 1.0;
+  let tilt = grain.xyz;
   slope += frame.grain.y * vec2f(-tilt.x, -tilt.z) / max(tilt.y, 0.2);
   let normal = normalize(vec3f(-slope.x, 1.0, -slope.y));
-  // The sun low, for now, so that the relief shows.
-  let sun = normalize(vec3f(0.8, 0.45, 0.3));
+  // The sand's roughness: its own, grain on grain, and what the
+  // filtering has averaged out of the grains' normal, which is shorter
+  // by that much (Toksvig).
+  let shortened = max(length(tilt), 0.2);
+  let sigma2 = 0.36 + (1.0 - shortened) / shortened;
+  let sun = frame.sun.xyz;
+  // Whether the sun is up over the ripples here: the horizon toward it,
+  // from the four the tile holds, against its elevation; softly, as the
+  // horizons, filtered, are a mean over what is under the pixel.
+  let sunAcross = vec2f(dot(sun.xz, dir), dot(sun.xz, vec2f(-dir.y, dir.x)));
+  let toward = max(vec4f(sunAcross.x, -sunAcross.x, sunAcross.y, -sunAcross.y),
+                   vec4f(0.0));
+  let rims = textureSampleGrad(horizons, rippleSampler, rippleUV(world.xz),
+                               rippleUV(footAlong), rippleUV(footAcross));
+  let horizon = dot(toward, rims) / max(dot(toward, vec4f(1.0)), 1e-4) * 1.5707963;
+  let lit = smoothstep(horizon - 0.15, horizon + 0.15, asin(clamp(sun.y, -1.0, 1.0)));
   // The sand's colour, speckled by the grains: each its own brightness,
   // the gaps between them dark; far off, their mean.
   let sand = vec3f(0.55, 0.47, 0.30) * mix(1.0, 2.0 * grain.a, frame.grain.z);
+  // Lit by the sky as much as it can see, and by the sun where it is up.
   let cavity = mix(1.0, tile.a, frame.tiling.w);
-  let light = (0.25 + 0.75 * max(dot(normal, sun), 0.0)) * cavity;
+  let light = 0.25 * cavity + 0.75 * roughDiffuse(normal, sun, -view, sigma2) * lit;
   let color = sand * light;
   let fade = visible(length(in.relative));
   return vec4f(mix(background, color, fade), 1.0);

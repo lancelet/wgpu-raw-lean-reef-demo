@@ -19,9 +19,10 @@
 // The field is periodic over the tile, and each wave has a whole number
 // of cycles across it, so the tile repeats.
 //
-// Two passes: `fs_height` writes the height alone (a kernel sum a texel);
-// `fs_finish` reads it back for the slopes and the cavity, which need the
-// height at many points each.
+// Three passes: `fs_height` writes the height alone (a kernel sum a
+// texel); `fs_finish` reads it back for the slopes and the cavity, and
+// `fs_horizons` for the horizons, which need the height at many points
+// each.
 
 struct Bake {
   // Ripples across the tile; how far the ripples' direction strays from
@@ -275,4 +276,29 @@ fn heightAt(t : vec2i) -> f32 {
   let cavity = 1.0 - 0.5 * (tanP / sqrt(1.0 + tanP * tanP)
                             + tanM / sqrt(1.0 + tanM * tanM));
   return vec4f(h, sx / 8.0 + 0.5, sy / 8.0 + 0.5, cavity);
+}
+
+// The horizon from texel `t` along `step` (a direction, in texels): the
+// highest rise over run out to a wavelength, as an angle up from the
+// flat, 0 to 1 of a right angle.
+fn horizonAlong(t : vec2i, h : f32, step : vec2i) -> f32 {
+  let texel = bake.shape.x / bake.size.y;
+  let steepness = bake.size.x * (1.0 + bake.size.w + bake.pits.y);
+  let steps = 16;
+  let stride = max(1, i32(1.0 / texel) / steps);
+  var rise = 0.0;
+  for (var i = 1; i <= steps; i++) {
+    let run = f32(i * stride) * texel;
+    rise = max(rise, (heightAt(t + step * i * stride) - h) * steepness / run);
+  }
+  return atan(rise) / 1.5707963;
+}
+
+// The horizons: along the waves (x) and back, across them (y) and back;
+// the sun is below one where its elevation is less, in the shade.
+@fragment fn fs_horizons(in : Out) -> @location(0) vec4f {
+  let t = vec2i(in.position.xy);
+  let h = heightAt(t);
+  return vec4f(horizonAlong(t, h, vec2i(1, 0)), horizonAlong(t, h, vec2i(-1, 0)),
+               horizonAlong(t, h, vec2i(0, 1)), horizonAlong(t, h, vec2i(0, -1)));
 }

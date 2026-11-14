@@ -200,11 +200,11 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     (device : Device) (timestamps : Bool) : IO Unit := do
   let window ← options.window 960 540
   if options.screenshot.isSome || options.tile.isSome
-      || options.grainTile.isSome then
+      || options.grainTile.isSome || options.causticTile.isSome then
     let (width, height) ← window.size
     let app := options.initial width height
     let renderer ← Renderer.create device screenshotFormat app.floorMesh
-      app.ripples app.grains
+      app.ripples app.grains app.water
     if let some path := options.tile then
       dumpTile wgpu device renderer.ripples app.ripples.texels path
       let stem := (path.splitOn ".").dropLast
@@ -213,6 +213,9 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
       dumpTile wgpu device renderer.horizons app.ripples.texels horizonsPath
     if let some path := options.grainTile then
       dumpTile wgpu device renderer.grains app.grains.texels path
+    if let some path := options.causticTile then
+      dumpTile wgpu device { renderer.caustics with sampler := renderer.grains.sampler
+                             : Tile } app.water.texels path
     if let some path := options.screenshot then
       screenshot wgpu device renderer app path
     return
@@ -226,7 +229,7 @@ def start (options : Options) (wgpu : Instance) (adapter : Adapter)
     configure window surface device format viewFormat alpha
   let initial := options.initial width height
   let renderer ← Renderer.create device viewFormat initial.floorMesh
-    initial.ripples initial.grains timestamps
+    initial.ripples initial.grains initial.water timestamps
   let app ← IO.mkRef initial
   let reconfigure := do
     let (width, height) ←
@@ -290,7 +293,7 @@ open Reef in
 /-- The demo: `reef [--frames N] [--windowed] [--headless] [--screenshot FILE]
 [--camera X,Y,Z,YAW,PITCH] [--wireframe on|off] [--grid on|off]
 [--sun AZIMUTH,ELEVATION] [--relief FACTOR] [--ripples FACTOR]
-[--waves DEGREES] [--tile FILE] [--grain-tile FILE]`. -/
+[--waves DEGREES] [--tile FILE] [--grain-tile FILE] [--caustic-tile FILE]`. -/
 def main (args : List String) : IO UInt32 := do
   match Options.parse args with
   | .error message => IO.eprintln message; return 2

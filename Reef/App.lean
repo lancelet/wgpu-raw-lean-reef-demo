@@ -211,13 +211,26 @@ structure Water where
   /-- The sun's light at the floor, and the sky's from all above. -/
   sunlight   : Vec3  := ⟨1.05, 0.92, 0.70⟩
   skylight   : Vec3  := ⟨0.18, 0.30, 0.33⟩
-  /-- The caustics: a cell's width on the surface, in metres, and their
-  strength, 0 none to 1 as designed; and the speed of the waves that make
-  them, in metres a second (chop of half a metre to a metre runs at
-  about one). -/
-  caustic    : Float := 0.35
+  /-- The caustics' strength, 0 none to 1 as the surface makes them. -/
   focus      : Float := 1
-  speed      : Float := 0.8
+  /-- The sea's surface (`shaders/ocean.wgsl`): one tile of it, this wide,
+  in metres, repeating; the wind that makes its waves, in metres a second,
+  and its direction, in radians from the x axis; how high the waves are,
+  a factor; the shortest wave kept, in metres. -/
+  tile          : Float := 8
+  wind          : Float := 3.5
+  windDirection : Float := 0.5
+  amplitude     : Float := 0.0004
+  shortest      : Float := 0.04
+  /-- The caustics' loop (`Reef/Caustics.lean`): its length, in seconds,
+  and its moments, baked as the layers of a texture this many texels a
+  side; the grid of the surface drawn into each, quads a side, and its
+  margin beyond the tile, in metres. -/
+  loop          : Float := 3
+  frames        : Nat   := 72
+  texels        : Nat   := 512
+  grid          : Nat   := 512
+  margin        : Float := 0.6
   deriving Repr, Inhabited
 
 /-- What is shown of the scene besides itself: the development overlays. -/
